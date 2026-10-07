@@ -2,6 +2,13 @@
 
 # Laradomains
 
+<p align="center">
+    <a href="https://github.com/edulazaro/laradomains/actions/workflows/tests.yml"><img src="https://github.com/edulazaro/laradomains/actions/workflows/tests.yml/badge.svg" alt="Tests"></a>
+    <a href="https://packagist.org/packages/edulazaro/laradomains"><img src="https://img.shields.io/packagist/v/edulazaro/laradomains" alt="Latest Stable Version"></a>
+    <a href="https://packagist.org/packages/edulazaro/laradomains"><img src="https://img.shields.io/packagist/php-v/edulazaro/laradomains" alt="PHP Version"></a>
+    <a href="https://github.com/edulazaro/laradomains/blob/main/LICENSE"><img src="https://img.shields.io/packagist/l/edulazaro/laradomains" alt="License"></a>
+</p>
+
 Everything you can learn about a domain **without visiting it**: parsing with the Public Suffix List, registration data over RDAP, age, DNS over HTTPS and malware or adult screening. Every answer comes from a third party (the registry, a DNS resolver, the Wayback Machine), never from the domain itself, which matters when the domain was typed by a stranger and may be hostile.
 
 ## Installation
@@ -10,7 +17,7 @@ Everything you can learn about a domain **without visiting it**: parsing with th
 composer require edulazaro/laradomains
 ```
 
-Requires PHP 8.2+ with the `intl` extension and Laravel 11 or newer. Optionally publish the config:
+Requires PHP 8.4+ with the `intl` extension and Laravel 12 or newer. Optionally publish the config:
 
 ```bash
 php artisan vendor:publish --tag=laradomains-config
