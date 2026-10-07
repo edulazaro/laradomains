@@ -2,11 +2,13 @@
 
 namespace EduLazaro\Laradomains\Support;
 
+use EduLazaro\Laradomains\Typosquat;
+
 /**
- * Whether a name is one typing slip away from another: a letter added (`paypall`), a letter
- * dropped (`payal`), two neighbours swapped (`paypla`), or one letter replaced by another
- * that looks like it (`paypa1`, `goog1e`). Letter pairs that read as one letter count too:
- * `rn` for `m` (`arnazon`), `vv` for `w`, `cl` for `d`.
+ * Whether a name is one typing slip away from another, and which slip: a letter replaced by
+ * one that looks like it (`paypa1`, `goog1e`) or two letters that read as one (`rn` for `m`,
+ * `vv` for `w`, `cl` for `d`); two neighbours swapped (`paypla`); a letter added (`paypall`) or
+ * dropped (`payal`).
  *
  * Any other replacement does not count: `paypay` is one letter from `paypal` and is a real
  * company, and so are plenty of names one keystroke away from a brand.
@@ -26,68 +28,95 @@ final class Typos
      */
     public static function oneSlipFrom(string $name, string $target): bool
     {
+        return self::slip($name, $target) !== null;
+    }
+
+    /**
+     * The kind of slip that turns $target into $name, or null when there is none (or they are
+     * the same). The strongest kind wins when more than one would explain it.
+     *
+     * @param string $name
+     * @param string $target
+     * @return string|null A Typosquat kind.
+     */
+    public static function slip(string $name, string $target): ?string
+    {
         if ($name === $target) {
-            return false;
+            return null;
         }
 
-        foreach (self::readings($name) as $reading) {
-            if ($reading === $target || self::distance($reading, $target) === 1) {
+        $collapsed = strtr($name, self::LOOKALIKE_PAIRS);
+
+        if ($collapsed !== $name && $collapsed === $target) {
+            return Typosquat::LOOKALIKE;
+        }
+
+        foreach (array_unique([$name, $collapsed]) as $reading) {
+            if ($kind = self::singleEdit($reading, $target)) {
+                return $kind;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param string $a
+     * @param string $b
+     * @return string|null
+     */
+    private static function singleEdit(string $a, string $b): ?string
+    {
+        $n = strlen($a);
+        $m = strlen($b);
+
+        if ($n === $m) {
+            $diff = [];
+            for ($i = 0; $i < $n; $i++) {
+                if ($a[$i] !== $b[$i]) {
+                    $diff[] = $i;
+                }
+            }
+
+            if (count($diff) === 1 && self::lookalike($a[$diff[0]], $b[$diff[0]])) {
+                return Typosquat::LOOKALIKE;
+            }
+
+            if (count($diff) === 2 && $diff[1] === $diff[0] + 1
+                && $a[$diff[0]] === $b[$diff[1]] && $a[$diff[1]] === $b[$diff[0]]) {
+                return Typosquat::SWAP;
+            }
+
+            return null;
+        }
+
+        if ($n === $m + 1 && self::dropsToTarget($a, $b)) {
+            return Typosquat::EXTRA;
+        }
+
+        if ($n + 1 === $m && self::dropsToTarget($b, $a)) {
+            return Typosquat::MISSING;
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether removing one character from $longer gives $shorter.
+     *
+     * @param string $longer
+     * @param string $shorter
+     * @return bool
+     */
+    private static function dropsToTarget(string $longer, string $shorter): bool
+    {
+        for ($i = 0, $len = strlen($longer); $i < $len; $i++) {
+            if (substr($longer, 0, $i).substr($longer, $i + 1) === $shorter) {
                 return true;
             }
         }
 
         return false;
-    }
-
-    /**
-     * The name as written, and with every letter pair that reads as one letter collapsed.
-     *
-     * @param string $name
-     * @return list<string>
-     */
-    private static function readings(string $name): array
-    {
-        return array_values(array_unique([$name, strtr($name, self::LOOKALIKE_PAIRS)]));
-    }
-
-    /**
-     * Edit distance where insertions, deletions and swaps of neighbours cost 1, a replacement
-     * by a lookalike letter costs 1 and any other replacement costs 2 (so it never counts as
-     * a single slip). Optimal string alignment, enough for a distance of one.
-     *
-     * @param string $a
-     * @param string $b
-     * @return int
-     */
-    private static function distance(string $a, string $b): int
-    {
-        $n = strlen($a);
-        $m = strlen($b);
-
-        if (abs($n - $m) > 1) {
-            return 2;
-        }
-
-        $d = [];
-        for ($i = 0; $i <= $n; $i++) {
-            $d[$i][0] = $i;
-        }
-        for ($j = 0; $j <= $m; $j++) {
-            $d[0][$j] = $j;
-        }
-
-        for ($i = 1; $i <= $n; $i++) {
-            for ($j = 1; $j <= $m; $j++) {
-                $replace = $a[$i - 1] === $b[$j - 1] ? 0 : (self::lookalike($a[$i - 1], $b[$j - 1]) ? 1 : 2);
-                $d[$i][$j] = min($d[$i - 1][$j] + 1, $d[$i][$j - 1] + 1, $d[$i - 1][$j - 1] + $replace);
-
-                if ($i > 1 && $j > 1 && $a[$i - 1] === $b[$j - 2] && $a[$i - 2] === $b[$j - 1]) {
-                    $d[$i][$j] = min($d[$i][$j], $d[$i - 2][$j - 2] + 1);
-                }
-            }
-        }
-
-        return $d[$n][$m];
     }
 
     /**

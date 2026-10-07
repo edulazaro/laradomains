@@ -287,12 +287,27 @@ final class Domain implements Stringable
      * registrable name, so `paypall.com` and `paypall.net` both match `paypal.com`.
      *
      * Only for brand names of five letters or more: shorter names sit one slip away from too
-     * many ordinary words. A weaker signal than imitates(), good for review rather than block.
+     * many ordinary words. A weaker signal than imitates(), good for review rather than block;
+     * typosquat() says which kind of slip it was, and `$kinds` keeps only some kinds.
      *
      * @param iterable<string> $brands Domains such as "paypal.com".
+     * @param list<string>|null $kinds Typosquat kinds to accept; null for all.
      * @return string|null
      */
-    public function typosquats(iterable $brands): ?string
+    public function typosquats(iterable $brands, ?array $kinds = null): ?string
+    {
+        return $this->typosquat($brands, $kinds)?->brand;
+    }
+
+    /**
+     * Like typosquats(), with the kind of slip: Typosquat::LOOKALIKE (strong), SWAP (medium),
+     * EXTRA or MISSING (weak, where ordinary words such as `apples` land).
+     *
+     * @param iterable<string> $brands
+     * @param list<string>|null $kinds
+     * @return Typosquat|null
+     */
+    public function typosquat(iterable $brands, ?array $kinds = null): ?Typosquat
     {
         $mine = $this->registrable() ?? $this->ascii;
         $name = explode('.', Confusables::skeleton((string) idn_to_utf8($mine, IDNA_NONTRANSITIONAL_TO_UNICODE, INTL_IDNA_VARIANT_UTS46) ?: $mine))[0];
@@ -306,9 +321,10 @@ final class Domain implements Stringable
             }
 
             $brandName = explode('.', $theirs)[0];
+            $kind = strlen($brandName) >= 5 ? Typos::slip($name, $brandName) : null;
 
-            if (strlen($brandName) >= 5 && Typos::oneSlipFrom($name, $brandName)) {
-                return $target->withoutWww()->ascii;
+            if ($kind !== null && ($kinds === null || in_array($kind, $kinds, true))) {
+                return new Typosquat($target->withoutWww()->ascii, $kind);
             }
         }
 

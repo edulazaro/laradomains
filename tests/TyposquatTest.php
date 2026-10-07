@@ -3,6 +3,7 @@
 namespace EduLazaro\Laradomains\Tests;
 
 use EduLazaro\Laradomains\Domain;
+use EduLazaro\Laradomains\Typosquat;
 
 class TyposquatTest extends TestCase
 {
@@ -36,5 +37,31 @@ class TyposquatTest extends TestCase
         $this->assertNull(Domain::parse('www.paypal.com')->typosquats($this->brands));
         $this->assertNull(Domain::parse('paypal.net')->typosquats($this->brands));    // same name, another TLD: not a slip
         $this->assertNull(Domain::parse('xx.com')->typosquats($this->brands));        // brands under five letters
+    }
+
+    public function test_typosquat_says_which_kind_of_slip_it_was(): void
+    {
+        foreach ([
+            'goog1e.com' => Typosquat::LOOKALIKE,
+            'arnazon.com' => Typosquat::LOOKALIKE,
+            'paypla.com' => Typosquat::SWAP,
+            'paypall.com' => Typosquat::EXTRA,
+            'payal.com' => Typosquat::MISSING,
+        ] as $domain => $kind) {
+            $typosquat = Domain::parse($domain)->typosquat($this->brands);
+            $this->assertSame($kind, $typosquat->kind, $domain);
+        }
+
+        $this->assertTrue(Domain::parse('goog1e.com')->typosquat($this->brands)->isLookalike());
+        $this->assertSame('google.com', Domain::parse('goog1e.com')->typosquat($this->brands)->brand);
+    }
+
+    public function test_kinds_keeps_only_the_slips_asked_for(): void
+    {
+        $strong = [Typosquat::LOOKALIKE];
+
+        $this->assertSame('google.com', Domain::parse('goog1e.com')->typosquats($this->brands, kinds: $strong));
+        $this->assertNull(Domain::parse('apples.com')->typosquats($this->brands, kinds: $strong));   // a word, weak kind
+        $this->assertSame('apple.com', Domain::parse('apples.com')->typosquats($this->brands));       // matched without the filter
     }
 }

@@ -88,6 +88,19 @@ Domain::parse('arnazon.com')->typosquats(['amazon.com']);   // "amazon.com"
 Domain::parse('paypay.com')->typosquats(['paypal.com']);    // null
 ```
 
+The kinds of slip do not weigh the same, and `typosquat()` says which one it was. A lookalike letter or a pair read as one (`goog1e`, `arnazon`) is rarely an accident; letters swapped (`paypla`) is a medium sign; a letter added or dropped (`paypall`, `payal`) is the weakest, and where ordinary words land, since no code knows without a dictionary that `apples` is a word:
+
+```php
+use EduLazaro\Laradomains\Typosquat;
+
+$typosquat = Domain::parse('goog1e.com')->typosquat(['google.com']);
+$typosquat->brand;   // "google.com"
+$typosquat->kind;    // Typosquat::LOOKALIKE (also SWAP, EXTRA, MISSING)
+
+// Only the strong kind:
+Domain::parse('apples.com')->typosquats(['apple.com'], kinds: [Typosquat::LOOKALIKE]);   // null
+```
+
 Brand names under four letters only match `impersonates()` as full copies, since `bbc` or `x` turn up inside ordinary names. A brand that is also a common word will still match ordinary sites (`apple.com` matches `apple-pie-recipes.com`), so treat `impersonates()` as a reason to review a link, not to block it; `imitates()`, a copy of the whole name, is the stronger signal.
 
 ### Keeping the lists current
