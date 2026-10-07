@@ -1,0 +1,43 @@
+{
+    "name": "edulazaro/laradomains",
+    "description": "Everything you can learn about a domain without visiting it: parsing with the Public Suffix List, RDAP registration data, age, DNS over HTTPS and malware or adult screening",
+    "keywords": ["laravel", "domain", "rdap", "whois", "public suffix list", "dns over https", "idn", "punycode"],
+    "license": "MIT",
+    "type": "library",
+    "require": {
+        "php": "^8.2",
+        "ext-intl": "*",
+        "laravel/framework": ">=11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "EduLazaro\\Laradomains\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "EduLazaro\\Laradomains\\Tests\\": "tests/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Edu Lazaro",
+            "email": "edu@edulazaro.com"
+        }
+    ],
+    "extra": {
+        "laravel": {
+            "providers": [
+                "EduLazaro\\Laradomains\\LaradomainsServiceProvider"
+            ],
+            "aliases": {
+                "Domains": "EduLazaro\\Laradomains\\Facades\\Domains"
+            }
+        }
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5|^11.0|^12.0",
+        "orchestra/testbench": "^9.0|^10.0|^11.0"
+    },
+    "minimum-stability": "stable"
+}
