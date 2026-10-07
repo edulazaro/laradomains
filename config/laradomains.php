@@ -154,6 +154,9 @@ return [
 
     'certificates' => [
         'endpoint' => 'https://crt.sh/',
+        // The answer is read as a stream up to this many bytes: enough for any domain whose
+        // age is in question, and a domain with more is years old.
+        'max_bytes' => 2_000_000,
     ],
 
     /*

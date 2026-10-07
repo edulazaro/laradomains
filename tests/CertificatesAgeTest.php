@@ -65,4 +65,29 @@ class CertificatesAgeTest extends TestCase
 
         Http::assertNotSent(fn ($request) => str_contains($request->url(), 'crt.sh'));
     }
+
+    public function test_a_huge_answer_is_read_only_up_to_the_limit_and_still_gives_a_lower_bound(): void
+    {
+        config(['laradomains.certificates.max_bytes' => 4096]);
+        $entries = [];
+        for ($i = 0; $i < 500; $i++) {
+            $entries[] = ['id' => $i, 'name_value' => 'ejemplo.es', 'not_before' => sprintf('2024-%02d-01T00:00:00', ($i % 12) + 1)];
+        }
+        // The real first certificate sits at the end, past the limit.
+        $entries[] = ['id' => 999, 'name_value' => 'ejemplo.es', 'not_before' => '2012-01-01T00:00:00'];
+        Http::fake(['crt.sh/*' => Http::response($entries)]);
+
+        $age = Domains::age('ejemplo.es', certificates: true);
+
+        $this->assertSame(Age::CERTIFICATES, $age->source);
+        $this->assertSame('2024-01-01', $age->since->toDateString());   // earliest of what was read
+        $this->assertFalse($age->isNewerThan(30));
+    }
+
+    public function test_an_answer_with_no_certificates_is_unknown(): void
+    {
+        Http::fake(['crt.sh/*' => Http::response([])]);
+
+        $this->assertNull(Domains::age('ejemplo.es', certificates: true));
+    }
 }

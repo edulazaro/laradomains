@@ -124,7 +124,7 @@ final class DomainAge
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
 
         try {
-            $response = Http::withRetries(Http::for('certificates', $timeout)->accept('application/json'), 'certificates')
+            $response = Http::withRetries(Http::for('certificates', $timeout)->accept('application/json')->withOptions(['stream' => true]), 'certificates')
                 ->get((string) config('laradomains.certificates.endpoint', 'https://crt.sh/'), [
                     'identity' => $domain->registrable() ?? $domain->ascii,
                     'match' => '=',
@@ -135,26 +135,41 @@ final class DomainAge
             return null;
         }
 
-        $entries = $response->successful() ? $response->json() : null;
-
-        if (! is_array($entries) || $entries === []) {
+        if (! $response->successful()) {
             return null;
         }
 
-        $first = null;
-        foreach ($entries as $entry) {
-            try {
-                $date = is_array($entry) && is_string($entry['not_before'] ?? null) ? CarbonImmutable::parse($entry['not_before'], 'UTC') : null;
-            } catch (Throwable) {
-                $date = null;
-            }
+        // Read as a stream, up to a limit, and pick the dates out of what arrived instead of
+        // decoding the whole answer: a big domain has megabytes of certificates. Any certificate
+        // proves the domain existed on its date, so the earliest one read is a valid lower
+        // bound even when the rest is cut off, and a domain with that many is not new anyway.
+        $body = $response->toPsrResponse()->getBody();
+        $limit = (int) config('laradomains.certificates.max_bytes', 2_000_000);
+        $read = '';
 
-            if ($date !== null && ($first === null || $date->lt($first))) {
-                $first = $date;
+        try {
+            while (! $body->eof() && strlen($read) < $limit) {
+                $read .= $body->read(min(65536, $limit - strlen($read)));
             }
+        } catch (Throwable) {
+            // A connection dropped halfway still leaves what was read.
+        } finally {
+            $body->close();
         }
 
-        return $first;
+        preg_match_all('/"not_before"\s*:\s*"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/', $read, $matches);
+
+        if ($matches[1] === []) {
+            return null;
+        }
+
+        sort($matches[1]);
+
+        try {
+            return CarbonImmutable::parse($matches[1][0], 'UTC');
+        } catch (Throwable) {
+            return null;
+        }
     }
 
     /**
