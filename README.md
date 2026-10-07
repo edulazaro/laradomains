@@ -153,9 +153,36 @@ $age = Domains::age('ejemplo.es', wayback: true);        // first Wayback captur
 $age->days();             // 10950
 $age->years();            // 30.0
 $age->since;              // CarbonImmutable
-$age->source;             // "rdap" or "wayback"
+$age->source;             // "rdap", "certificates" or "wayback"
 $age->isNewerThan(30);    // registered in the last month?
 ```
+
+`age()` returns `null` both when there is no date to give and when a lookup failed. `ageCheck()` takes the same arguments and tells them apart:
+
+```php
+use EduLazaro\Laradomains\Age\AgeCheck;
+
+$check = Domains::ageCheck('ejemplo.es', certificates: true);
+
+$check->status;      // "found", "none" or "unknown"
+$check->age;         // Age|null
+$check->reason;      // why there is no date, null when found
+$check->failed;      // sources that did not answer: ["rdap"], ["certificates"]...
+$check->found();     // a date
+$check->definite();  // a date, or a definite "there is none"
+$check->failed();    // a lookup failed and no source found a date
+```
+
+| Status | Reason | Meaning |
+|---|---|---|
+| `found` | | A date. `failed` may still list sources that did not answer. |
+| `none` | `unsupported_tld` | The TLD's registry publishes no RDAP, and no fallback was asked for. |
+| `none` | `not_registered` | The registry has no data for that name (an RDAP 404). Some registries implement RDAP badly, so this is not proof that the name is free. |
+| `none` | `no_registration_date` | The registry answered, without a registration date. |
+| `none` | `no_certificates`, `no_captures` | The fallbacks answered, with nothing. With both asked, the reason is the last one asked (`no_captures`). |
+| `unknown` | `lookup_failed` | A source did not answer and none found a date. Worth asking again later. |
+
+Any date is `found`, even when another source failed: when RDAP is down and crt.sh answers, the result is a date from certificates with `failed: ["rdap"]`. A date from certificates or the Wayback Machine is a lower bound, so check `failed` before reading it as "registered on". The fallbacks are only asked when RDAP gives no date, so an empty `failed` with source `rdap` means nobody else needed asking, not that everyone was asked.
 
 Several registries (`.es`, `.de`, `.io`, `.it`) publish no RDAP, so their domains have no registration date. Two lower bounds stand in for it, both opt-in, and with both asked the earliest date wins:
 
@@ -164,7 +191,7 @@ Several registries (`.es`, `.de`, `.io`, `.it`) publish no RDAP, so their domain
 
 The Wayback fallback is off by default: its CDX server allows about a dozen requests a minute, which suits a queued job and not a request path. A refused request waits `wayback.retry_delay` milliseconds (5000 by default) before each of `wayback.retries` retries. A first capture is a lower bound, not a registration date.
 
-To remember ages, set `LARADOMAINS_AGE_CACHE_FOR` to a number of seconds. Age belongs to the registrable domain, so `a.spam.io` and `b.spam.io` share one entry. Definite answers (a date, "not registered", "no RDAP for this TLD") are kept for `cache_for`; a lookup that failed is kept for `age.retry_after` seconds (300 by default), so a spam campaign repeating the same new domain costs one registry request, not one per message. Nothing is cached in an `array` or `null` store, which would not survive the request; `LARADOMAINS_CACHE_STORE` picks another store.
+To remember ages, set `LARADOMAINS_AGE_CACHE_FOR` to a number of seconds. Age belongs to the registrable domain, so `a.spam.io` and `b.spam.io` share one entry, and the whole check is kept (status, reason and failed sources). Complete answers (`found` or `none` with every source answering) are kept for `cache_for`; `unknown`, and `found` with a failed source, for `age.retry_after` seconds (300 by default), so a spam campaign repeating the same new domain costs one registry request, not one per message. Nothing is cached in an `array` or `null` store, which would not survive the request; `LARADOMAINS_CACHE_STORE` picks another store.
 
 ## DNS
 
@@ -177,10 +204,12 @@ $dns->resolves('example.com');      // true
 $dns->addresses('example.com');     // ["93.184.215.14", "2606:2800:..."]
 $dns->nameservers('example.com');
 $dns->mx('example.com');            // lowest priority first
-$dns->acceptsMail('example.com');   // false for no MX or a null MX (RFC 7505)
+$dns->acceptsMail('example.com');   // true, false, or null when a lookup failed
 $dns->txt('example.com');           // multi-string records joined
 $dns->records('example.com', 'CNAME');
 ```
+
+`acceptsMail()` decides the way a mail server does (RFC 5321 §5.1): an MX host accepts mail; a null MX (`0 .`, RFC 7505) refuses it; with no MX at all, mail goes to the domain's own A or AAAA address, and a domain with neither (or that does not exist) refuses it. When a lookup fails (timeout, HTTP error, SERVFAIL) the answer is `null`, never `false`: a disposable-address check must not reject a real domain because a resolver hiccuped. The other methods describe rather than decide, so a failed lookup there is an empty list.
 
 ## Screening
 
@@ -214,22 +243,40 @@ To cache verdicts per host, set `LARADOMAINS_SCREEN_CACHE_FOR` in seconds: compl
 
 The adult category is broad (it also catches piracy, cannabis shops and the odd false positive): treat it as a flag for review rather than as proof.
 
-## Timeouts
+## Timeouts and retries
 
 Each service has its own timeout and retries, so a request path is not held by the slowest one:
 
 ```php
-// config/laradomains.php
-'timeouts' => ['rdap' => 10, 'dns' => 3, 'screen' => 2, 'wayback' => 20],
-'retries' => ['rdap' => 0, 'dns' => 1, 'screen' => 0, 'wayback' => 1],
-'retry_delay' => ['dns' => 200, 'wayback' => 5000],
+// config/laradomains.php (the defaults)
+'timeouts' => ['rdap' => 10, 'dns' => 3, 'screen' => 2, 'wayback' => 20, 'certificates' => 20],
+'retries' => ['rdap' => 0, 'dns' => 1, 'screen' => 0, 'wayback' => 1, 'certificates' => 1],
+'retry_delay' => ['dns' => 200, 'wayback' => 5000, 'certificates' => 3000],
 ```
 
-And every network call takes its own: `Domains::rdap($d, timeout: 1)`, `Domains::age($d, timeout: 1)`, `Domains::screen($d, timeout: 1)`.
+Every network call also takes its own `timeout` (seconds) and `retries` (tries after the first; `null` takes the config, `0` makes a single attempt): `rdap()`, `age()`, `ageCheck()`, `screen()`, `verdict()`, `Screen::isMalware()`, `DnsClient::query()`, `queryEach()`, `acceptsMail()`, `DomainAge::firstCertificate()` and `firstCapture()`.
+
+The timeout applies to each request, so the worst case of one request is `(retries + 1) × timeout + retries × retry_delay`. With the defaults:
+
+| Service | Worst case per request |
+|---|---|
+| `rdap` | 1 × 10 s = 10 s |
+| `dns` | 2 × 3 s + 0.2 s = 6.2 s (`acceptsMail()` can make three: MX, A, AAAA) |
+| `screen` | 1 × 2 s = 2 s (both resolvers in parallel) |
+| `certificates` | 2 × 20 s + 3 s = 43 s |
+| `wayback` | 2 × 20 s + 5 s = 45 s |
+
+`ageCheck()` adds up its sources: RDAP, then the fallbacks asked for. The defaults suit a queued job. In a web request, use a short timeout and no retries, and treat `null` or `unknown` as "check later":
+
+```php
+$check = Domains::ageCheck($domain, certificates: true, timeout: 1.5, retries: 0);    // at most ~3 s
+$mail = Domains::dns()->acceptsMail($domain, timeout: 1, retries: 0);                // at most ~3 s
+$verdict = Domains::screen($domain, timeout: 1, retries: 0);                         // at most ~1 s
+```
 
 ## Rate limits
 
-Every request passes through a hook first, with the service name (`rdap`, `dns`, `screen`, `wayback`). It is the place for a rate limiter shared across workers:
+Every request passes through a hook first, with the service name (`rdap`, `dns`, `screen`, `wayback`, `certificates`). It is the place for a rate limiter shared across workers:
 
 ```php
 use Illuminate\Support\Facades\RateLimiter;
@@ -246,6 +293,21 @@ Domains::beforeRequest(function (string $service) {
     }
 });
 ```
+
+## Upgrading from 1.5
+
+`DnsClient::acceptsMail()` returns `?bool` instead of `bool`, and follows the implicit MX:
+
+| | 1.5 | 1.6 |
+|---|---|---|
+| The MX lookup fails (timeout, HTTP error, SERVFAIL) | `false` | `null` |
+| No MX, but an A or AAAA record | `false` | `true` |
+| No MX and no address, or no such name | `false` | `false` |
+| A null MX (`0 .`) | `false` | `false` |
+
+`if (! $dns->acceptsMail($domain))` keeps working, since `null` is falsy, but now also stops on "could not tell". Code that compares with `=== false` no longer sees DNS failures: check for `null` where it should be treated as "check later".
+
+Also new, and compatible: `Domains::ageCheck()`, and a `retries` argument on every network call. When RDAP fails, `age()` now tries the fallbacks asked for (`certificates`, `wayback`) instead of giving up; it still returns `null` when none finds a date. Age entries cached by 1.5 are looked up again once.
 
 ## Upgrading from 1.2
 
