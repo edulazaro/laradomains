@@ -4,6 +4,7 @@ namespace EduLazaro\Laradomains;
 
 use EduLazaro\Laradomains\Support\Confusables;
 use EduLazaro\Laradomains\Support\PublicSuffixList;
+use EduLazaro\Laradomains\Support\Typos;
 use InvalidArgumentException;
 use Stringable;
 
@@ -264,6 +265,41 @@ final class Domain implements Stringable
             $name = explode('.', $theirs)[0];
 
             if (strlen($name) >= 4 && in_array($name, $parts, true)) {
+                return $target->withoutWww()->ascii;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * The brand this name is one typing slip away from, or null: a letter added (`paypall`),
+     * dropped (`payal`), swapped with its neighbour (`paypla`), replaced by a lookalike
+     * (`goog1e`), or a pair of letters that reads as one (`arnazon` for amazon). Compares the
+     * registrable name, so `paypall.com` and `paypall.net` both match `paypal.com`.
+     *
+     * Only for brand names of five letters or more: shorter names sit one slip away from too
+     * many ordinary words. A weaker signal than imitates(), good for review rather than block.
+     *
+     * @param iterable<string> $brands Domains such as "paypal.com".
+     * @return string|null
+     */
+    public function typosquats(iterable $brands): ?string
+    {
+        $mine = $this->registrable() ?? $this->ascii;
+        $name = explode('.', Confusables::skeleton((string) idn_to_utf8($mine, IDNA_NONTRANSITIONAL_TO_UNICODE, INTL_IDNA_VARIANT_UTS46) ?: $mine))[0];
+
+        foreach ($brands as $brand) {
+            $target = self::tryParse($brand);
+            $theirs = $target?->registrable() ?? $target?->ascii;
+
+            if ($target === null || $theirs === $mine) {
+                continue;
+            }
+
+            $brandName = explode('.', $theirs)[0];
+
+            if (strlen($brandName) >= 5 && Typos::oneSlipFrom($name, $brandName)) {
                 return $target->withoutWww()->ascii;
             }
         }

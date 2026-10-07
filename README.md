@@ -79,7 +79,15 @@ Domain::parse('paypalooza.com')->impersonates(['paypal.com']);             // nu
 Domain::parse('www.paypal.com')->impersonates(['paypal.com']);             // null: it is the brand
 ```
 
-Brand names under four letters only match as full copies, since `bbc` or `x` turn up inside ordinary names. A brand that is also a common word will still match ordinary sites (`apple.com` matches `apple-pie-recipes.com`), so treat `impersonates()` as a reason to review a link, not to block it; `imitates()`, a copy of the whole name, is the stronger signal.
+`typosquats()` catches the typing slips: a letter added (`paypall.com`), dropped (`payal.com`), swapped with its neighbour (`paypla.com`), a lookalike letter (`goog1e.com`) or two letters that read as one (`arnazon.com`). Any other replaced letter does not count, since `paypay.com` is a real company one letter from PayPal, and brand names under five letters are skipped:
+
+```php
+Domain::parse('paypall.com')->typosquats(['paypal.com']);   // "paypal.com"
+Domain::parse('arnazon.com')->typosquats(['amazon.com']);   // "amazon.com"
+Domain::parse('paypay.com')->typosquats(['paypal.com']);    // null
+```
+
+Brand names under four letters only match `impersonates()` as full copies, since `bbc` or `x` turn up inside ordinary names. A brand that is also a common word will still match ordinary sites (`apple.com` matches `apple-pie-recipes.com`), so treat `impersonates()` as a reason to review a link, not to block it; `imitates()`, a copy of the whole name, is the stronger signal.
 
 ### Keeping the lists current
 
