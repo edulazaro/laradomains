@@ -120,4 +120,18 @@ class RdapTest extends TestCase
 
         $this->assertSame(['rdap', 'rdap'], $seen);
     }
+
+    public function test_hooks_do_not_survive_a_new_application(): void
+    {
+        $calls = 0;
+        Domains::beforeRequest(function () use (&$calls) {
+            $calls++;
+        });
+
+        $this->refreshApplication();
+        Http::fake(['data.iana.org/*' => Http::response($this->bootstrap()), 'rdap.verisign.com/*' => Http::response([], 404)]);
+        Domains::rdap('example.com');
+
+        $this->assertSame(0, $calls);
+    }
 }
