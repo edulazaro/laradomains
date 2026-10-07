@@ -104,25 +104,33 @@ final class DnsClient
     }
 
     /**
+     * A DNS-over-HTTPS lookup that tells failure from emptiness: the records (possibly none,
+     * for a name that does not exist), or null when the resolver could not be asked or did
+     * not answer properly (timeout, HTTP error, SERVFAIL). Callers that decide something on
+     * the answer, such as screening, must not read null as "no records".
+     *
      * @param string $endpoint
      * @param string $host
      * @param string $type
      * @param string $service
-     * @return list<string>
+     * @param float|null $timeout
+     * @return list<string>|null
      */
-    public function doh(string $endpoint, string $host, string $type, string $service = 'dns'): array
+    public function query(string $endpoint, string $host, string $type, string $service = 'dns', ?float $timeout = null): ?array
     {
         try {
-            $response = Http::for($service)
-                ->accept('application/dns-json')
-                ->retry(2, 300, throw: false)
+            $response = Http::withRetries(Http::for($service, $timeout)->accept('application/dns-json'), $service)
                 ->get($endpoint, ['name' => $host, 'type' => $type]);
         } catch (ConnectionException) {
-            return [];
+            return null;
         }
 
-        if (! $response->successful()) {
-            return [];
+        // DNS status: 0 is an answer, 3 (NXDOMAIN) a definite "no such name"; anything else
+        // (SERVFAIL, REFUSED) means the question went unanswered.
+        $status = $response->successful() ? $response->json('Status') : null;
+
+        if (! in_array($status, [0, 3], true)) {
+            return null;
         }
 
         $code = self::TYPES[$type] ?? null;
@@ -134,6 +142,20 @@ final class DnsClient
                 : rtrim((string) $answer['data'], $type === 'MX' ? '' : '.'))
             ->values()
             ->all();
+    }
+
+    /**
+     * Like query(), with a failure read as no records: right for lookups that only describe.
+     *
+     * @param string $endpoint
+     * @param string $host
+     * @param string $type
+     * @param string $service
+     * @return list<string>
+     */
+    public function doh(string $endpoint, string $host, string $type, string $service = 'dns'): array
+    {
+        return $this->query($endpoint, $host, $type, $service) ?? [];
     }
 
     /**

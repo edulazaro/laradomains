@@ -61,4 +61,46 @@ class DnsAndScreenTest extends TestCase
         $this->assertSame(Screen::CLEAN, Domains::screen('adult.example', adult: false));
         $this->assertSame(Screen::CLEAN, Domains::screen('fine.example'));
     }
+
+    public function test_screening_fails_closed_when_a_resolver_does_not_answer(): void
+    {
+        Http::fake([
+            'security.cloudflare-dns.com/*' => Http::response('', 503),
+            'family.cloudflare-dns.com/*' => Http::response($this->answer([['type' => 1, 'data' => '93.184.215.14']])),
+        ]);
+
+        $this->assertSame(Screen::UNKNOWN, Domains::screen('example.com'));
+        $this->assertNull(app(Screen::class)->isMalware('example.com'));
+    }
+
+    public function test_a_servfail_is_unknown_but_nxdomain_is_an_answer(): void
+    {
+        Http::fake([
+            'security.cloudflare-dns.com/*' => fn ($request) => Http::response(['Status' => $request['name'] === 'broken.example' ? 2 : 3]),
+            'family.cloudflare-dns.com/*' => Http::response(['Status' => 3]),
+        ]);
+
+        $this->assertSame(Screen::UNKNOWN, Domains::screen('broken.example'));
+        $this->assertSame(Screen::CLEAN, Domains::screen('does-not-exist.example'));
+    }
+
+    public function test_the_adult_resolver_failing_is_unknown_too(): void
+    {
+        Http::fake([
+            'security.cloudflare-dns.com/*' => Http::response($this->answer([['type' => 1, 'data' => '93.184.215.14']])),
+            'family.cloudflare-dns.com/*' => Http::response('', 500),
+        ]);
+
+        $this->assertSame(Screen::UNKNOWN, Domains::screen('example.com'));
+        $this->assertSame(Screen::CLEAN, Domains::screen('example.com', adult: false));
+    }
+
+    public function test_each_call_can_set_its_own_timeout_and_screening_does_not_retry(): void
+    {
+        Http::fake(['security.cloudflare-dns.com/*' => Http::response('', 503)]);
+
+        Domains::screen('example.com', adult: false, timeout: 0.5);
+
+        Http::assertSentCount(1);
+    }
 }

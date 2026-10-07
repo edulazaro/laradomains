@@ -18,8 +18,12 @@ use Throwable;
  * Machine capture for TLDs whose registry publishes no date (.es, .de, .it, .io...).
  *
  * The Wayback fallback is off by default: the CDX server is slow and allows about a dozen
- * requests a minute, which is fine in a queued job and wrong on a request path. With
- * `age.cache_for` set, each answer is remembered in a persistent cache store.
+ * requests a minute, which is fine in a queued job and wrong on a request path.
+ *
+ * Age belongs to the registrable domain, so `a.spam.io` and `b.spam.io` are one question, and
+ * that is the cache key. With `age.cache_for` set, definite answers are kept that long and a
+ * failed lookup for `age.retry_after` seconds: a spam campaign sends the same new domain in
+ * every message, and must not cost one registry request per message.
  */
 final class DomainAge
 {
@@ -31,54 +35,63 @@ final class DomainAge
     /**
      * @param Domain|string $domain
      * @param bool $wayback Fall back to the first Wayback capture.
-     * @return Age|null
+     * @param float|null $timeout Seconds for each request of this call.
+     * @return Age|null Null when the age is unknown, for whatever reason.
      */
-    public function of(Domain|string $domain, bool $wayback = false): ?Age
+    public function of(Domain|string $domain, bool $wayback = false, ?float $timeout = null): ?Age
     {
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
         $store = $this->store();
 
         if ($store === null) {
-            return $this->lookup($domain, $wayback);
+            return $this->lookup($domain, $wayback, $timeout)[0];
         }
 
-        // Only found ages are kept: a lookup that failed this time should be asked again, and
-        // a TLD without RDAP costs no request anyway (the bootstrap is read from disk).
-        $key = 'laradomains.age.'.($wayback ? 'w.' : '').$domain->ascii;
+        $key = 'laradomains.age.'.($wayback ? 'w.' : '').($domain->registrable() ?? $domain->ascii);
+        $cached = $store->get($key);
 
-        if (is_array($cached = $store->get($key))) {
-            return new Age(CarbonImmutable::parse($cached['since']), $cached['source']);
+        if ($cached !== null) {
+            return is_array($cached) ? new Age(CarbonImmutable::parse($cached['since']), $cached['source']) : null;
         }
 
-        $age = $this->lookup($domain, $wayback);
+        [$age, $definite] = $this->lookup($domain, $wayback, $timeout);
+        $ttl = (int) ($definite ? config('laradomains.age.cache_for') : config('laradomains.age.retry_after', 300));
 
-        if ($age !== null) {
-            $store->put($key, ['since' => $age->since->toIso8601String(), 'source' => $age->source], (int) config('laradomains.age.cache_for'));
+        if ($ttl > 0) {
+            $store->put($key, $age === null ? 'unknown' : ['since' => $age->since->toIso8601String(), 'source' => $age->source], $ttl);
         }
 
         return $age;
     }
 
     /**
+     * The age, and whether the answer is definite (a date, or a registry saying there is none
+     * to give) rather than the result of a lookup that failed.
+     *
      * @param Domain $domain
      * @param bool $wayback
-     * @return Age|null
+     * @param float|null $timeout
+     * @return array{Age|null, bool}
      */
-    private function lookup(Domain $domain, bool $wayback): ?Age
+    private function lookup(Domain $domain, bool $wayback, ?float $timeout): array
     {
-        $registration = $this->rdap->lookup($domain);
+        $registration = $this->rdap->lookup($domain, $timeout);
 
         if ($registration->registeredAt !== null) {
-            return new Age($registration->registeredAt, Age::RDAP);
+            return [new Age($registration->registeredAt, Age::RDAP), true];
+        }
+
+        if ($registration->failed()) {
+            return [null, false];
         }
 
         if (! $wayback || $registration->registered === false) {
-            return null;
+            return [null, true];
         }
 
-        $first = $this->firstCapture($domain);
+        $first = $this->firstCapture($domain, $timeout);
 
-        return $first === null ? null : new Age($first, Age::WAYBACK);
+        return $first === null ? [null, false] : [new Age($first, Age::WAYBACK), true];
     }
 
     /**
@@ -100,15 +113,15 @@ final class DomainAge
 
     /**
      * @param Domain|string $domain
+     * @param float|null $timeout
      * @return CarbonImmutable|null
      */
-    public function firstCapture(Domain|string $domain): ?CarbonImmutable
+    public function firstCapture(Domain|string $domain, ?float $timeout = null): ?CarbonImmutable
     {
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
 
         try {
-            $response = Http::for('wayback')
-                ->retry((int) config('laradomains.wayback.retries', 2), (int) config('laradomains.wayback.retry_delay', 5000), throw: false)
+            $response = Http::withRetries(Http::for('wayback', $timeout), 'wayback')
                 ->get((string) config('laradomains.wayback.endpoint'), [
                     'url' => $domain->registrable() ?? $domain->ascii,
                     'limit' => 1,

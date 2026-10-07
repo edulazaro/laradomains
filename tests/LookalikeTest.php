@@ -44,4 +44,25 @@ class LookalikeTest extends TestCase
         $this->assertNull(Domain::parse('www.apple.com')->imitates($brands));   // the brand itself
         $this->assertNull(Domain::parse('ejemplo.com')->imitates($brands));
     }
+
+    public function test_impersonates_catches_the_usual_phishing_shapes(): void
+    {
+        $brands = ['paypal.com', 'bbc.co.uk', 'x.com'];
+
+        $this->assertSame('paypal.com', Domain::parse('paypal.com.secure-login.io')->impersonates($brands));
+        $this->assertSame('paypal.com', Domain::parse('paypal-secure.com')->impersonates($brands));
+        $this->assertSame('paypal.com', Domain::parse('secure-paypa1.com')->impersonates($brands));
+        $this->assertSame('paypal.com', Domain::parse('раураl.com')->impersonates($brands));
+    }
+
+    public function test_impersonates_leaves_the_brand_and_ordinary_names_alone(): void
+    {
+        $brands = ['paypal.com', 'bbc.co.uk', 'x.com'];
+
+        $this->assertNull(Domain::parse('www.paypal.com')->impersonates($brands));
+        $this->assertNull(Domain::parse('news.bbc.co.uk')->impersonates($brands));
+        $this->assertNull(Domain::parse('paypalooza.com')->impersonates($brands));   // a part, not a substring
+        $this->assertNull(Domain::parse('bbc-news.com')->impersonates($brands));     // under four letters
+        $this->assertNull(Domain::parse('x-files.com')->impersonates($brands));
+    }
 }

@@ -56,6 +56,8 @@ $site->registrable(private: true);  // "edulazaro.github.io" (the site the platf
 
 `www` is kept, since it is a host of its own; `withoutWww()` drops it when you treat both as one site.
 
+The host is read the way a browser reads it, which is what matters when deciding where a link really goes: a backslash ends the host as a slash does, so `https://evil.example\@paypal.com/login` is `evil.example`, not PayPal.
+
 ### Lookalikes
 
 ```php
@@ -66,13 +68,18 @@ Domain::parse('яндекс.com')->isLookalike();  // false: a real Cyrillic wor
 Domain::parse('аррӏе.ru')->isLookalike();    // false: Cyrillic is the norm under .ru
 ```
 
-`skeleton()` gives the Latin reading of a name, and `imitates()` checks it against the brands you care about, also catching the `0`/`o` and `1`/`l` swaps:
+`skeleton()` gives the Latin reading of a name. `imitates()` checks it against the brands you care about, as a copy of the whole name (`0`/`o` and `1`/`l` swaps included); `impersonates()` adds the usual phishing shapes, the brand as a label or a hyphenated part of someone else's domain:
 
 ```php
-Domain::parse('аррӏе.com')->skeleton();                          // "apple.com"
-Domain::parse('www.paypa1.com')->imitates(['paypal.com']);       // "paypal.com"
-Domain::parse('paypal.com')->imitates(['paypal.com']);           // null: it is the brand
+Domain::parse('аррӏе.com')->skeleton();                                    // "apple.com"
+Domain::parse('www.paypa1.com')->imitates(['paypal.com']);                 // "paypal.com"
+Domain::parse('paypal.com.secure-login.io')->impersonates(['paypal.com']); // "paypal.com"
+Domain::parse('paypal-secure.com')->impersonates(['paypal.com']);          // "paypal.com"
+Domain::parse('paypalooza.com')->impersonates(['paypal.com']);             // null: a part, not a substring
+Domain::parse('www.paypal.com')->impersonates(['paypal.com']);             // null: it is the brand
 ```
+
+Brand names under four letters only match as full copies, since `bbc` or `x` turn up inside ordinary names.
 
 ### Keeping the lists current
 
@@ -129,7 +136,7 @@ $age->isNewerThan(30);    // registered in the last month?
 
 The Wayback fallback is off by default: its CDX server allows about a dozen requests a minute, which suits a queued job and not a request path. A refused request waits `wayback.retry_delay` milliseconds (5000 by default) before each of `wayback.retries` retries. A first capture is a lower bound, not a registration date.
 
-To remember ages, set `LARADOMAINS_AGE_CACHE_FOR` to a number of seconds. Only found ages are cached (a failed lookup is asked again next time), and only in a persistent store: with the `array` or `null` cache store nothing would survive the request, so the package does not cache there at all. `LARADOMAINS_CACHE_STORE` picks a store other than the default.
+To remember ages, set `LARADOMAINS_AGE_CACHE_FOR` to a number of seconds. Age belongs to the registrable domain, so `a.spam.io` and `b.spam.io` share one entry. Definite answers (a date, "not registered", "no RDAP for this TLD") are kept for `cache_for`; a lookup that failed is kept for `age.retry_after` seconds (300 by default), so a spam campaign repeating the same new domain costs one registry request, not one per message. Nothing is cached in an `array` or `null` store, which would not survive the request; `LARADOMAINS_CACHE_STORE` picks another store.
 
 ## DNS
 
@@ -154,11 +161,27 @@ Cloudflare's filtering resolvers answer `0.0.0.0` for names they block. Laradoma
 ```php
 use EduLazaro\Laradomains\Screen\Screen;
 
-Domains::screen('example.com');                // Screen::CLEAN, Screen::MALWARE or Screen::ADULT
+Domains::screen('example.com');                // CLEAN, MALWARE, ADULT or UNKNOWN
 Domains::screen('example.com', adult: false);  // malware and phishing only
+Domains::screen('example.com', timeout: 1.5);  // on a request path
 ```
 
+It fails closed: when a resolver cannot be asked (timeout, HTTP error, SERVFAIL) the answer is `Screen::UNKNOWN`, never `CLEAN`. "Could not look" and "found nothing" are different answers, and what `UNKNOWN` means (let through, hold for review, retry later) is the caller's decision. A name that does not exist (NXDOMAIN) is an answer, and clean.
+
 The adult category is broad (it also catches piracy, cannabis shops and the odd false positive): treat it as a flag for review rather than as proof.
+
+## Timeouts
+
+Each service has its own timeout and retries, so a request path is not held by the slowest one:
+
+```php
+// config/laradomains.php
+'timeouts' => ['rdap' => 10, 'dns' => 3, 'screen' => 2, 'wayback' => 20],
+'retries' => ['rdap' => 0, 'dns' => 1, 'screen' => 0, 'wayback' => 1],
+'retry_delay' => ['dns' => 200, 'wayback' => 5000],
+```
+
+And every network call takes its own: `Domains::rdap($d, timeout: 1)`, `Domains::age($d, timeout: 1)`, `Domains::screen($d, timeout: 1)`.
 
 ## Rate limits
 
@@ -179,6 +202,12 @@ Domains::beforeRequest(function (string $service) {
     }
 });
 ```
+
+## Upgrading from 1.1
+
+- `Domains::screen()` can return `Screen::UNKNOWN`; `Screen::isMalware()` returns `null` when it could not check.
+- The Wayback retries moved to `retries.wayback` and `retry_delay.wayback`, and count the tries after the first one. Old `wayback.retries` keys are still read.
+- The age cache is keyed by the registrable domain and also keeps failures for `age.retry_after`.
 
 ## Testing
 

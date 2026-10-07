@@ -38,15 +38,35 @@ final class Http
 
     /**
      * @param string $service
+     * @param float|null $timeout Seconds for this call; otherwise `timeouts.<service>`, then `timeout`.
      * @return PendingRequest
      */
-    public static function for(string $service): PendingRequest
+    public static function for(string $service, ?float $timeout = null): PendingRequest
     {
         foreach (self::$before as $hook) {
             $hook($service);
         }
 
+        $timeout ??= (float) (config("laradomains.timeouts.{$service}") ?? config('laradomains.timeout', 10));
+
         return Client::withUserAgent((string) config('laradomains.user_agent'))
-            ->timeout((int) config('laradomains.timeout', 10));
+            ->connectTimeout(min($timeout, 5))
+            ->timeout($timeout);
+    }
+
+    /**
+     * Attach the service's retries: how many times to try again after the first attempt, and
+     * the pause before each, in milliseconds. 1.1 configs kept them under `wayback.*`.
+     *
+     * @param PendingRequest $request
+     * @param string $service
+     * @return PendingRequest
+     */
+    public static function withRetries(PendingRequest $request, string $service): PendingRequest
+    {
+        $retries = (int) (config("laradomains.retries.{$service}") ?? config("laradomains.{$service}.retries", 0));
+        $delay = (int) (config("laradomains.retry_delay.{$service}") ?? config("laradomains.{$service}.retry_delay", 200));
+
+        return $retries > 0 ? $request->retry($retries + 1, $delay, throw: false) : $request;
     }
 }

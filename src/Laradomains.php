@@ -49,21 +49,23 @@ class Laradomains
 
     /**
      * @param Domain|string $domain
+     * @param float|null $timeout
      * @return Registration
      */
-    public function rdap(Domain|string $domain): Registration
+    public function rdap(Domain|string $domain, ?float $timeout = null): Registration
     {
-        return $this->rdap->lookup($domain);
+        return $this->rdap->lookup($domain, $timeout);
     }
 
     /**
      * @param Domain|string $domain
      * @param bool $wayback
+     * @param float|null $timeout
      * @return Age|null
      */
-    public function age(Domain|string $domain, bool $wayback = false): ?Age
+    public function age(Domain|string $domain, bool $wayback = false, ?float $timeout = null): ?Age
     {
-        return $this->age->of($domain, $wayback);
+        return $this->age->of($domain, $wayback, $timeout);
     }
 
     /**
@@ -77,11 +79,12 @@ class Laradomains
     /**
      * @param Domain|string $domain
      * @param bool $adult
-     * @return string
+     * @param float|null $timeout
+     * @return string Screen::CLEAN, MALWARE, ADULT or UNKNOWN.
      */
-    public function screen(Domain|string $domain, bool $adult = true): string
+    public function screen(Domain|string $domain, bool $adult = true, ?float $timeout = null): string
     {
-        return $this->screen->check($domain, $adult);
+        return $this->screen->check($domain, $adult, $timeout);
     }
 
     /**

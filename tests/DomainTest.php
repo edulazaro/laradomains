@@ -80,4 +80,14 @@ class DomainTest extends TestCase
         $this->assertFalse(Domain::parse('ñandú.es')->isLookalike());
         $this->assertFalse(Domain::parse('apple.com')->isLookalike());
     }
+
+    public function test_a_backslash_ends_the_host_as_it_does_in_a_browser(): void
+    {
+        $this->assertSame('evil.example', Domain::parse('https://evil.example\\@paypal.com/login')->ascii);
+        $this->assertSame('evil.example', Domain::parse('https://evil.example\\paypal.com')->ascii);
+        $this->assertSame('evil.example', Domain::parse('https:\\\\evil.example\\x')->ascii);
+        $this->assertSame('evil.example', Domain::parse('https://paypal.com@evil.example/')->ascii);
+        $this->assertSame('ejemplo.com', Domain::parse('ejemplo.com:8080/x')->ascii);
+        $this->assertSame('cdn.example.com', Domain::parse('//cdn.example.com/x.js')->ascii);
+    }
 }

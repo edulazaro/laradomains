@@ -225,6 +225,53 @@ final class Domain implements Stringable
     }
 
     /**
+     * The brand this host trades on without being it, or null. Covers what imitates() does
+     * (a copy of the whole name) plus the usual phishing shapes: the brand as a label of
+     * someone else's domain (`paypal.com.secure-login.io`) or as a hyphenated part of it
+     * (`paypal-secure.com`, `secure-paypa1.com`). The brand's own domain and its subdomains
+     * (`www.paypal.com`, `paypal.co.uk` if listed) never match.
+     *
+     * Matching is on whole parts, not substrings, so `paypalooza.com` is left alone; and brand
+     * names shorter than four letters only match as full copies, since `bbc` or `x` turn up
+     * inside ordinary names.
+     *
+     * @param iterable<string> $brands Domains such as "paypal.com".
+     * @return string|null
+     */
+    public function impersonates(iterable $brands): ?string
+    {
+        $brands = is_array($brands) ? $brands : iterator_to_array($brands, false);
+
+        if ($copied = $this->imitates($brands)) {
+            return $copied;
+        }
+
+        $mine = $this->registrable() ?? $this->ascii;
+        $skeleton = $this->skeleton();
+        $parts = array_unique([
+            ...preg_split('/[.-]/', $skeleton),
+            ...preg_split('/[.-]/', strtr($skeleton, ['0' => 'o', '1' => 'l'])),
+        ]);
+
+        foreach ($brands as $brand) {
+            $target = self::tryParse($brand);
+            $theirs = $target?->registrable() ?? $target?->ascii;
+
+            if ($target === null || $theirs === $mine) {
+                continue;
+            }
+
+            $name = explode('.', $theirs)[0];
+
+            if (strlen($name) >= 4 && in_array($name, $parts, true)) {
+                return $target->withoutWww()->ascii;
+            }
+        }
+
+        return null;
+    }
+
+    /**
      * @return self
      */
     public function withoutWww(): self
@@ -259,8 +306,11 @@ final class Domain implements Stringable
      */
     private static function extractHost(string $input): string
     {
-        $value = mb_strtolower(trim($input));
-        $value = preg_replace('#^[a-z][a-z0-9+.-]*://#', '', $value);
+        // Browsers treat "\" as "/" in web URLs (WHATWG URL standard), so it ends the host:
+        // `https://evil.example\@paypal.com` goes to evil.example, and must parse as such.
+        $value = str_replace('\\', '/', mb_strtolower(trim($input)));
+        $value = preg_replace('#^[a-z][a-z0-9+.-]*:(?=/)#', '', $value);
+        $value = ltrim($value, '/');
         $value = preg_replace('#[/?\#].*$#s', '', $value);
         $value = preg_replace('#^.*@#', '', $value);
         $value = preg_replace('#:\d+$#', '', $value);

@@ -28,9 +28,10 @@ final class RdapClient
 
     /**
      * @param Domain|string $domain
+     * @param float|null $timeout Seconds for this lookup; otherwise `timeouts.rdap`.
      * @return Registration
      */
-    public function lookup(Domain|string $domain): Registration
+    public function lookup(Domain|string $domain, ?float $timeout = null): Registration
     {
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
         $name = $domain->registrable() ?? $domain->ascii;
@@ -45,8 +46,7 @@ final class RdapClient
         }
 
         try {
-            $response = Http::for('rdap')
-                ->accept('application/rdap+json')
+            $response = Http::withRetries(Http::for('rdap', $timeout)->accept('application/rdap+json'), 'rdap')
                 ->get(rtrim($server, '/').'/domain/'.$name);
         } catch (ConnectionException $e) {
             return new Registration($name, supported: true, error: $e->getMessage(), server: $server);

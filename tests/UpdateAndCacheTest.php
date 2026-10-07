@@ -68,19 +68,59 @@ class UpdateAndCacheTest extends TestCase
         $this->assertSame('bbc.co.uk', Domain::parse('news.bbc.co.uk')->registrable());
     }
 
-    public function test_the_age_is_cached_only_in_a_persistent_store_and_only_when_found(): void
+    public function test_the_age_is_cached_by_registrable_domain(): void
     {
-        config(['laradomains.age.cache_for' => 3600, 'cache.stores.file.path' => $this->dir.'/cache', 'laradomains.cache_store' => 'file']);
+        $this->fileCache();
+        Http::fake(['rdap.verisign.com/*' => Http::response(['events' => [['eventAction' => 'registration', 'eventDate' => '2010-01-01T00:00:00Z']]])]);
+
+        $this->assertSame('2010-01-01', Domains::age('a.spam.com')->since->toDateString());
+        $this->assertSame('2010-01-01', Domains::age('b.spam.com')->since->toDateString());
+
+        Http::assertSentCount(1);
+    }
+
+    public function test_a_failed_lookup_is_kept_for_retry_after_so_a_campaign_does_not_hammer_the_registry(): void
+    {
+        $this->fileCache(retryAfter: 300);
+        Http::fake(['rdap.verisign.com/*' => Http::response([], 503)]);
+
+        foreach (range(1, 5) as $_) {
+            $this->assertNull(Domains::age('new-spam.com'));
+        }
+
+        Http::assertSentCount(1);
+    }
+
+    public function test_with_no_retry_after_a_failure_is_asked_again(): void
+    {
+        $this->fileCache(retryAfter: 0);
         Http::fake(['rdap.verisign.com/*' => Http::sequence()
             ->push([], 503)
-            ->push(['events' => [['eventAction' => 'registration', 'eventDate' => '2010-01-01T00:00:00Z']]])
-            ->push([], 503)]);
+            ->push(['events' => [['eventAction' => 'registration', 'eventDate' => '2010-01-01T00:00:00Z']]])]);
 
-        $this->assertNull(Domains::age('example.com'));                     // failed: not cached
+        $this->assertNull(Domains::age('example.com'));
         $this->assertSame('2010-01-01', Domains::age('example.com')->since->toDateString());
-        $this->assertSame('2010-01-01', Domains::age('example.com')->since->toDateString()); // from cache
+    }
 
-        Http::assertSentCount(2);
+    public function test_a_definite_no_is_cached_too(): void
+    {
+        $this->fileCache();
+        Http::fake(['rdap.verisign.com/*' => Http::response([], 404)]);
+
+        $this->assertNull(Domains::age('nobody-owns-this.com'));
+        $this->assertNull(Domains::age('nobody-owns-this.com'));
+
+        Http::assertSentCount(1);
+    }
+
+    private function fileCache(int $retryAfter = 300): void
+    {
+        config([
+            'laradomains.age.cache_for' => 3600,
+            'laradomains.age.retry_after' => $retryAfter,
+            'cache.stores.file.path' => $this->dir.'/cache',
+            'laradomains.cache_store' => 'file',
+        ]);
     }
 
     public function test_an_array_store_is_not_used_as_a_cache(): void
@@ -96,7 +136,7 @@ class UpdateAndCacheTest extends TestCase
 
     public function test_wayback_retry_delay_is_configurable(): void
     {
-        config(['laradomains.wayback.retries' => 2, 'laradomains.wayback.retry_delay' => 1]);
+        config(['laradomains.retries.wayback' => 1, 'laradomains.retry_delay.wayback' => 1]);
         Http::fake(['web.archive.org/*' => Http::sequence()->push('busy', 503)->push([['timestamp'], ['20101015083000']])]);
 
         $this->assertSame('2010-10-15', app(\EduLazaro\Laradomains\Age\DomainAge::class)->firstCapture('ejemplo.es')->toDateString());

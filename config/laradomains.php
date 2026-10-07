@@ -30,6 +30,29 @@ return [
 
     'timeout' => (int) env('LARADOMAINS_TIMEOUT', 10),
 
+    // Per service, in seconds, over `timeout`. Each call can also pass its own `timeout:`.
+    // Screening and DNS are short on purpose: they sit on request paths.
+    'timeouts' => [
+        'rdap' => 10,
+        'dns' => 3,
+        'screen' => 2,
+        'wayback' => 20,
+    ],
+
+    // Tries after the first one, and the pause before each (ms). The Wayback CDX server
+    // refuses bursts, so it waits long; screening does not retry, it answers "unknown".
+    'retries' => [
+        'rdap' => 0,
+        'dns' => 1,
+        'screen' => 0,
+        'wayback' => 1,
+    ],
+
+    'retry_delay' => [
+        'dns' => 200,
+        'wayback' => 5000,
+    ],
+
     'user_agent' => env('LARADOMAINS_USER_AGENT', 'Laradomains (+https://github.com/edulazaro/laradomains)'),
 
     /*
@@ -100,15 +123,13 @@ return [
     |--------------------------------------------------------------------------
     |
     | Used for the age of domains whose registry has no RDAP (.es, .de, .io).
-    | Its CDX server is strict with request rates, so it is opt-in per call,
-    | and a refused request waits `retry_delay` milliseconds before retrying.
+    | Its CDX server is strict with request rates, so it is opt-in per call;
+    | its retries are set above, under `retries` and `retry_delay`.
     |
     */
 
     'wayback' => [
         'endpoint' => 'https://web.archive.org/cdx/search/cdx',
-        'retries' => 2,
-        'retry_delay' => 5000,
     ],
 
     /*
@@ -116,13 +137,17 @@ return [
     | Age
     |--------------------------------------------------------------------------
     |
-    | Seconds to remember a domain's age, so repeated checks of the same
-    | domain cost no request. Null (the default) asks every time.
+    | Seconds to remember a domain's age, keyed by its registrable domain, so
+    | repeated checks (a.spam.io, b.spam.io) cost one request. `cache_for` keeps
+    | definite answers (a date, not registered, no RDAP for the TLD);
+    | `retry_after` keeps a failed lookup that long, so a campaign does not hit
+    | the registry once per message. Null (the default) asks every time.
     |
     */
 
     'age' => [
         'cache_for' => env('LARADOMAINS_AGE_CACHE_FOR'),
+        'retry_after' => 300,
     ],
 
 ];
