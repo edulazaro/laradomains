@@ -9,8 +9,9 @@ return [
     |
     | The list that says where the registrable part of a name starts (co.uk,
     | github.io, gob.es). The package ships a copy; `php artisan
-    | laradomains:update-suffixes` downloads a fresh one to this path, which
-    | wins over the bundled copy when it exists.
+    | laradomains:update` downloads a fresh one to this path, plus a compiled
+    | PHP version next to it that opcache keeps in memory. Both win over the
+    | bundled copy when they exist.
     |
     */
 
@@ -36,8 +37,9 @@ return [
     | Cache
     |--------------------------------------------------------------------------
     |
-    | Store used for the IANA RDAP bootstrap (refreshed weekly). Null uses the
-    | application's default store.
+    | Store for the optional age cache (see `age.cache_for`). Null uses the
+    | application's default store. An `array` or `null` store keeps nothing
+    | between requests, so the package does not cache there at all.
     |
     */
 
@@ -49,13 +51,16 @@ return [
     |--------------------------------------------------------------------------
     |
     | Lookups go straight to the registry's own server, found through the IANA
-    | bootstrap. `fallback` is asked only for TLDs the bootstrap does not list;
-    | set it to null to never use a relay.
+    | bootstrap. The package ships a copy of it and `laradomains:update`
+    | downloads a fresh one to `bootstrap_path`, so a lookup never fetches it.
+    | `fallback` is asked only for TLDs the bootstrap does not list; set it to
+    | null to never use a relay.
     |
     */
 
     'rdap' => [
         'bootstrap' => 'https://data.iana.org/rdap/dns.json',
+        'bootstrap_path' => storage_path('app/laradomains/rdap_dns.json'),
         'fallback' => env('LARADOMAINS_RDAP_FALLBACK', 'https://rdap.org'),
     ],
 
@@ -95,12 +100,29 @@ return [
     |--------------------------------------------------------------------------
     |
     | Used for the age of domains whose registry has no RDAP (.es, .de, .io).
-    | Its CDX server is strict with request rates, so it is opt-in per call.
+    | Its CDX server is strict with request rates, so it is opt-in per call,
+    | and a refused request waits `retry_delay` milliseconds before retrying.
     |
     */
 
     'wayback' => [
         'endpoint' => 'https://web.archive.org/cdx/search/cdx',
+        'retries' => 2,
+        'retry_delay' => 5000,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Age
+    |--------------------------------------------------------------------------
+    |
+    | Seconds to remember a domain's age, so repeated checks of the same
+    | domain cost no request. Null (the default) asks every time.
+    |
+    */
+
+    'age' => [
+        'cache_for' => env('LARADOMAINS_AGE_CACHE_FOR'),
     ],
 
 ];

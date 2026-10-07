@@ -2,7 +2,7 @@
 
 namespace EduLazaro\Laradomains;
 
-use EduLazaro\Laradomains\Console\UpdateSuffixes;
+use EduLazaro\Laradomains\Console\UpdateLists;
 use EduLazaro\Laradomains\Support\Http;
 use Illuminate\Support\ServiceProvider;
 
@@ -32,7 +32,7 @@ class LaradomainsServiceProvider extends ServiceProvider
         ], 'laradomains-config');
 
         if ($this->app->runningInConsole()) {
-            $this->commands([UpdateSuffixes::class]);
+            $this->commands([UpdateLists::class]);
         }
     }
 }

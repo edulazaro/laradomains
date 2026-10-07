@@ -7,23 +7,24 @@ use EduLazaro\Laradomains\Domain;
 use EduLazaro\Laradomains\Support\Http;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Http\Client\Response;
-use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 /**
  * Registration data over RDAP, the protocol that replaced WHOIS.
  *
  * There is no central RDAP database: every registry runs its own server, and IANA publishes
- * which one serves each TLD (the bootstrap file). This client reads that file once a week and
- * asks the registry directly, so a lookup is one request and no relay sees the names asked
- * about. A relay (rdap.org by default) is used only for TLDs the bootstrap does not list.
+ * which one serves each TLD (the bootstrap file). The package ships a copy of that file and
+ * `laradomains:update` refreshes it, so a lookup is one request straight to the registry, with
+ * no cache needed and no relay seeing the names asked about. A relay (rdap.org by default) is
+ * used only for TLDs the bootstrap does not list.
  *
  * Lookups are made for the registrable domain, since a registry knows `bbc.co.uk`, not
  * `news.bbc.co.uk`.
  */
 final class RdapClient
 {
-    private const CACHE_KEY = 'laradomains.rdap.bootstrap';
+    /** @var array<string, array<string, string>> bootstrap file => TLD map */
+    private static array $maps = [];
 
     /**
      * @param Domain|string $domain
@@ -34,11 +35,7 @@ final class RdapClient
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
         $name = $domain->registrable() ?? $domain->ascii;
 
-        try {
-            $server = $this->serverFor($domain->tld());
-        } catch (Throwable $e) {
-            return new Registration($name, supported: true, error: 'RDAP bootstrap unavailable: '.$e->getMessage());
-        }
+        $server = $this->serverFor($domain->tld());
 
         $relay = $server === null;
         $server ??= config('laradomains.rdap.fallback');
@@ -77,26 +74,47 @@ final class RdapClient
      */
     public function serverFor(string $tld): ?string
     {
-        $store = Cache::store(config('laradomains.cache_store'));
-        $map = $store->get(self::CACHE_KEY);
+        $path = (string) config('laradomains.rdap.bootstrap_path');
 
-        if (! is_array($map)) {
-            $map = $this->bootstrap();
-            $store->put(self::CACHE_KEY, $map, now()->addWeek());
+        if ($path === '' || ! is_file($path)) {
+            $path = self::bundledPath();
         }
 
-        return $map[strtolower($tld)] ?? null;
+        return (self::$maps[$path] ??= self::map((string) file_get_contents($path)) ?? [])[strtolower($tld)] ?? null;
     }
 
     /**
-     * @return array<string, string> TLD => server URL (https preferred)
+     * @return string
      */
-    private function bootstrap(): array
+    public static function bundledPath(): string
     {
-        $services = Http::for('rdap')
-            ->get((string) config('laradomains.rdap.bootstrap'))
-            ->throw()
-            ->json('services', []);
+        return dirname(__DIR__, 2).'/resources/rdap_dns.json';
+    }
+
+    /**
+     * Forget the loaded bootstrap files, so the next lookup reads them again (after an update).
+     *
+     * @return void
+     */
+    public static function flush(): void
+    {
+        self::$maps = [];
+    }
+
+    /**
+     * TLD => server URL (https preferred) from the contents of an IANA bootstrap file. Null when
+     * the contents are not a bootstrap file at all, which the update command uses as a check.
+     *
+     * @param string $json
+     * @return array<string, string>|null
+     */
+    public static function map(string $json): ?array
+    {
+        $services = json_decode($json, true)['services'] ?? null;
+
+        if (! is_array($services) || $services === []) {
+            return null;
+        }
 
         $map = [];
         foreach ($services as [$tlds, $urls]) {

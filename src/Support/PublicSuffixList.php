@@ -30,7 +30,8 @@ final class PublicSuffixList
     ) {}
 
     /**
-     * The list in use: the downloaded copy when there is one, the bundled one otherwise.
+     * The list in use: the compiled copy written by `laradomains:update` (a PHP array opcache
+     * keeps in memory), then the downloaded text copy, then the one shipped with the package.
      *
      * @return self
      */
@@ -40,11 +41,51 @@ final class PublicSuffixList
             ? (string) config('laradomains.public_suffix_list')
             : '';
 
+        if ($path !== '' && is_file($compiled = self::compiledPath($path))) {
+            return self::$loaded[$compiled] ??= self::fromArray(require $compiled);
+        }
+
         if ($path === '' || ! is_file($path)) {
             $path = self::bundledPath();
         }
 
         return self::$loaded[$path] ??= self::fromFile($path);
+    }
+
+    /**
+     * Where the compiled copy of a downloaded list lives: next to it, with a .php extension.
+     *
+     * @param string $path
+     * @return string
+     */
+    public static function compiledPath(string $path): string
+    {
+        return preg_replace('/\.dat$/', '', $path).'.php';
+    }
+
+    /**
+     * Write the parsed list as a PHP file that returns its rules.
+     *
+     * @param string $path
+     * @return void
+     */
+    public function compileTo(string $path): void
+    {
+        file_put_contents($path.'.tmp', '<?php return '.var_export(['rules' => $this->rules, 'exceptions' => $this->exceptions], true).';'.PHP_EOL);
+        rename($path.'.tmp', $path);
+
+        if (function_exists('opcache_invalidate')) {
+            @opcache_invalidate($path, true);
+        }
+    }
+
+    /**
+     * @param array{rules: array<string, bool>, exceptions: array<string, bool>} $data
+     * @return self
+     */
+    public static function fromArray(array $data): self
+    {
+        return new self($data['rules'], $data['exceptions']);
     }
 
     /**

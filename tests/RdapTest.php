@@ -92,17 +92,26 @@ class RdapTest extends TestCase
 
         $this->assertTrue($first->failed());
         $this->assertSame('HTTP 503', $first->error);
-        Http::assertSentCount(3); // one bootstrap, two lookups
+        Http::assertSentCount(2); // two lookups, no bootstrap download
     }
 
-    public function test_an_unreachable_bootstrap_is_a_failure_not_an_unsupported_tld(): void
+    public function test_lookups_read_the_bootstrap_from_disk_never_from_the_network(): void
     {
-        Http::fake(['data.iana.org/*' => Http::response('down', 500)]);
+        Http::fake(['rdap.verisign.com/*' => Http::response([], 404)]);
 
-        $registration = Domains::rdap('example.com');
+        $this->assertFalse(Domains::rdap('example.com')->registered);
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), 'data.iana.org'));
+    }
 
-        $this->assertTrue($registration->failed());
-        $this->assertTrue($registration->supported);
+    public function test_a_downloaded_bootstrap_wins_over_the_bundled_one(): void
+    {
+        $path = sys_get_temp_dir().'/laradomains-test-dns.json';
+        file_put_contents($path, json_encode(['services' => [[['com'], ['https://rdap.example-registry.test/']]]]));
+        config(['laradomains.rdap.bootstrap_path' => $path]);
+        Http::fake(['rdap.example-registry.test/*' => Http::response([], 404)]);
+
+        $this->assertSame('https://rdap.example-registry.test/', Domains::rdap('example.com')->server);
+        @unlink($path);
     }
 
     public function test_the_before_hook_sees_every_request(): void
@@ -118,7 +127,7 @@ class RdapTest extends TestCase
 
         Domains::rdap('example.com');
 
-        $this->assertSame(['rdap', 'rdap'], $seen);
+        $this->assertSame(['rdap'], $seen);
     }
 
     public function test_hooks_do_not_survive_a_new_application(): void

@@ -60,20 +60,33 @@ $site->registrable(private: true);  // "edulazaro.github.io" (the site the platf
 
 ```php
 Domain::parse('аpple.com')->isLookalike();   // true: the first "а" is Cyrillic
+Domain::parse('аррӏе.com')->isLookalike();   // true: all Cyrillic, but every letter has a Latin twin
 Domain::parse('ñandú.es')->isLookalike();    // false: accented, but one script
+Domain::parse('яндекс.com')->isLookalike();  // false: a real Cyrillic word
+Domain::parse('аррӏе.ru')->isLookalike();    // false: Cyrillic is the norm under .ru
 ```
 
-### Keeping the list current
-
-The package ships a copy of the list. Download a fresh one to `storage/app/laradomains/` (it wins over the bundled copy) and schedule it monthly:
+`skeleton()` gives the Latin reading of a name, and `imitates()` checks it against the brands you care about, also catching the `0`/`o` and `1`/`l` swaps:
 
 ```php
-Schedule::command('laradomains:update-suffixes')->monthly();
+Domain::parse('аррӏе.com')->skeleton();                          // "apple.com"
+Domain::parse('www.paypa1.com')->imitates(['paypal.com']);       // "paypal.com"
+Domain::parse('paypal.com')->imitates(['paypal.com']);           // null: it is the brand
 ```
+
+### Keeping the lists current
+
+The package ships a copy of the Public Suffix List and of the IANA RDAP bootstrap, so it works with no download and no cache. `laradomains:update` fetches fresh copies to `storage/app/laradomains/`, which win over the bundled ones, and compiles the suffix list to a PHP array that opcache keeps in memory. Schedule it monthly:
+
+```php
+Schedule::command('laradomains:update')->monthly();
+```
+
+A download that does not look like the real list is discarded and the current copy kept.
 
 ## Registration data (RDAP)
 
-RDAP is the protocol that replaced WHOIS. There is no central database: each registry runs its own server, and IANA publishes which one serves each TLD. Laradomains reads that bootstrap once a week and asks the registry directly, for the registrable domain:
+RDAP is the protocol that replaced WHOIS. There is no central database: each registry runs its own server, and IANA publishes which one serves each TLD. Laradomains reads that bootstrap from disk and asks the registry directly, for the registrable domain, so a lookup is a single request:
 
 ```php
 use EduLazaro\Laradomains\Facades\Domains;
@@ -114,7 +127,9 @@ $age->source;             // "rdap" or "wayback"
 $age->isNewerThan(30);    // registered in the last month?
 ```
 
-The Wayback fallback is off by default: its CDX server allows about a dozen requests a minute, which suits a queued job and not a request path. A first capture is a lower bound, not a registration date.
+The Wayback fallback is off by default: its CDX server allows about a dozen requests a minute, which suits a queued job and not a request path. A refused request waits `wayback.retry_delay` milliseconds (5000 by default) before each of `wayback.retries` retries. A first capture is a lower bound, not a registration date.
+
+To remember ages, set `LARADOMAINS_AGE_CACHE_FOR` to a number of seconds. Only found ages are cached (a failed lookup is asked again next time), and only in a persistent store: with the `array` or `null` cache store nothing would survive the request, so the package does not cache there at all. `LARADOMAINS_CACHE_STORE` picks a store other than the default.
 
 ## DNS
 

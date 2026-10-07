@@ -23,11 +23,14 @@ abstract class TestCase extends BaseTestCase
     {
         $app['config']->set('cache.default', 'array');
         $app['config']->set('laradomains.public_suffix_list', '/nonexistent/psl.dat');
+        $app['config']->set('laradomains.rdap.bootstrap_path', '/nonexistent/dns.json');
     }
 
     protected function tearDown(): void
     {
         Http::flushHooks();
+        \EduLazaro\Laradomains\Rdap\RdapClient::flush();
+        \EduLazaro\Laradomains\Support\PublicSuffixList::flush();
         parent::tearDown();
     }
 }

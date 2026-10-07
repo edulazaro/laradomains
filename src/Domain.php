@@ -2,6 +2,7 @@
 
 namespace EduLazaro\Laradomains;
 
+use EduLazaro\Laradomains\Support\Confusables;
 use EduLazaro\Laradomains\Support\PublicSuffixList;
 use InvalidArgumentException;
 use Stringable;
@@ -143,30 +144,84 @@ final class Domain implements Stringable
     }
 
     /**
-     * Whether a reader could take this name for another one: an internationalised label that
-     * mixes scripts (`аpple.com` with a Cyrillic а). Accented names in one script (`ñandú.es`,
-     * `münchen.de`) and names wholly in another script (`日本語.jp`) are not suspicious.
+     * Whether a reader could take this name for another one. Two cases: a label that mixes
+     * scripts (`аpple.com` with a Cyrillic а), and a label written wholly in Cyrillic or Greek
+     * whose every letter has a Latin twin (`аррӏе.com`), unless the TLD belongs to that script.
+     * Accented names in one script (`ñandú.es`, `münchen.de`) and real words in another script
+     * (`яндекс.com`, `日本語.jp`) are not suspicious.
      *
      * @return bool
      */
     public function isLookalike(): bool
     {
-        if (! $this->isIdn() || ! class_exists(\Spoofchecker::class)) {
+        if (! $this->isIdn()) {
             return false;
         }
 
-        // Highly restrictive: one script per label, or Latin plus the CJK combinations
-        // that real names use. ICU's older confusable checks no longer flag mixed labels.
+        $labels = explode('.', $this->unicode);
+        $tld = array_pop($labels);
+
+        foreach ($labels as $label) {
+            if (Confusables::isWholeScriptLookalike($label, $this->tld())) {
+                return true;
+            }
+        }
+
+        if (! class_exists(\Spoofchecker::class)) {
+            return false;
+        }
+
+        // Highly restrictive: one script per label, or Latin plus the CJK combinations real
+        // names use. ICU's older confusable checks no longer flag mixed labels.
         $checker = new \Spoofchecker;
         $checker->setRestrictionLevel(\Spoofchecker::HIGHLY_RESTRICTIVE);
 
-        foreach (explode('.', $this->unicode) as $label) {
+        foreach ([...$labels, $tld] as $label) {
             if ($checker->isSuspicious($label)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * How the name reads in Latin letters: `аррӏе.com` gives `apple.com`. Letters without a
+     * Latin twin are kept, so a real Cyrillic word stays Cyrillic.
+     *
+     * @return string
+     */
+    public function skeleton(): string
+    {
+        return Confusables::skeleton($this->unicode);
+    }
+
+    /**
+     * The brand this name passes for, or null: a different domain whose skeleton matches one of
+     * the given ones, also after swapping 0 for o and 1 for l (`paypa1.com`). `www` is ignored
+     * on both sides.
+     *
+     * @param iterable<string> $brands Domains such as "paypal.com".
+     * @return string|null
+     */
+    public function imitates(iterable $brands): ?string
+    {
+        $self = $this->withoutWww();
+        $mine = [$self->skeleton(), strtr($self->skeleton(), ['0' => 'o', '1' => 'l'])];
+
+        foreach ($brands as $brand) {
+            $target = self::tryParse($brand)?->withoutWww();
+
+            if ($target === null || $target->ascii === $self->ascii) {
+                continue;
+            }
+
+            if (in_array($target->unicode, $mine, true) || in_array(strtr($target->unicode, ['0' => 'o', '1' => 'l']), $mine, true)) {
+                return $target->ascii;
+            }
+        }
+
+        return null;
     }
 
     /**
