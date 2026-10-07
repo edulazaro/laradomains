@@ -4,20 +4,25 @@ namespace EduLazaro\Laradomains\Screen;
 
 use EduLazaro\Laradomains\Dns\DnsClient;
 use EduLazaro\Laradomains\Domain;
+use Illuminate\Cache\ArrayStore;
+use Illuminate\Cache\NullStore;
+use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Whether a domain is known for malware, phishing or adult content, asked of Cloudflare's
  * filtering resolvers over DNS: they answer 0.0.0.0 for the names they block. Nothing reaches
  * the domain itself, which is the point when the domain may be hostile.
  *
- * Fails closed: when a resolver cannot be asked (timeout, HTTP error, SERVFAIL) the answer is
- * UNKNOWN, never CLEAN. "Could not look" and "looked and found nothing" are different answers,
- * and a caller that blocks on MALWARE has to decide what UNKNOWN means for it.
+ * Fails closed: when a resolver cannot be asked (timeout, HTTP error, SERVFAIL) its part of the
+ * verdict is unknown, never clean. Both resolvers are asked in parallel, so the wait is the
+ * slower of the two, not their sum.
  *
- * The `family` resolver blocks malware and adult content together, so it is asked only after
- * the `security` one has said the name is not malware. Its adult category is broad (it also
- * catches piracy, cannabis shops and the odd false positive), so treat ADULT as a flag for
- * review rather than as proof.
+ * The adult category is broad (it also catches piracy, cannabis shops and the odd false
+ * positive), so treat ADULT as a flag for review rather than as proof.
+ *
+ * With `screen.cache_for` set, complete verdicts are kept that long per host and incomplete
+ * ones for `screen.retry_after` seconds, in a persistent cache store.
  */
 final class Screen
 {
@@ -37,33 +42,57 @@ final class Screen
     /**
      * @param Domain|string $domain
      * @param bool $adult Also ask the family resolver.
-     * @param float|null $timeout Seconds for each resolver; otherwise `timeouts.screen`.
+     * @param float|null $timeout Seconds for the resolvers; otherwise `timeouts.screen`.
      * @return string One of the class constants.
      */
     public function check(Domain|string $domain, bool $adult = true, ?float $timeout = null): string
     {
+        return $this->verdict($domain, $adult, $timeout)->decision();
+    }
+
+    /**
+     * Both answers, each on its own.
+     *
+     * @param Domain|string $domain
+     * @param bool $adult
+     * @param float|null $timeout
+     * @return Verdict
+     */
+    public function verdict(Domain|string $domain, bool $adult = true, ?float $timeout = null): Verdict
+    {
         $host = $domain instanceof Domain ? $domain->ascii : Domain::parse($domain)->ascii;
+        $store = $this->store();
+        $key = 'laradomains.screen.'.($adult ? 'a.' : 'm.').$host;
 
-        $malware = $this->blockedBy((string) config('laradomains.screen.malware'), $host, $timeout);
-
-        if ($malware !== false) {
-            return $malware === true ? self::MALWARE : self::UNKNOWN;
+        if ($store !== null && is_array($cached = $store->get($key))) {
+            return Verdict::fromArray($cached);
         }
 
-        if (! $adult) {
-            return self::CLEAN;
+        $endpoints = ['malware' => (string) config('laradomains.screen.malware')];
+
+        if ($adult) {
+            $endpoints['adult'] = (string) config('laradomains.screen.adult');
         }
 
-        return match ($this->blockedBy((string) config('laradomains.screen.adult'), $host, $timeout)) {
-            true => self::ADULT,
-            false => self::CLEAN,
-            null => self::UNKNOWN,
-        };
+        $answers = $this->dns->queryEach($endpoints, $host, 'A', 'screen', $timeout);
+        $blocked = fn (?array $records) => $records === null ? null : in_array('0.0.0.0', $records, true);
+
+        $verdict = new Verdict($host, $blocked($answers['malware']), $adult ? $blocked($answers['adult']) : null, $adult);
+
+        if ($store !== null) {
+            $ttl = (int) ($verdict->complete() ? config('laradomains.screen.cache_for') : config('laradomains.screen.retry_after', 60));
+
+            if ($ttl > 0) {
+                $store->put($key, $verdict->toArray(), $ttl);
+            }
+        }
+
+        return $verdict;
     }
 
     /**
      * True for malware or phishing, false when checked and clean, null when it could not be
-     * checked.
+     * checked. Only the malware resolver is asked.
      *
      * @param Domain|string $domain
      * @param float|null $timeout
@@ -71,23 +100,20 @@ final class Screen
      */
     public function isMalware(Domain|string $domain, ?float $timeout = null): ?bool
     {
-        return match ($this->check($domain, adult: false, timeout: $timeout)) {
-            self::MALWARE => true,
-            self::CLEAN => false,
-            default => null,
-        };
+        return $this->verdict($domain, adult: false, timeout: $timeout)->malware;
     }
 
     /**
-     * @param string $endpoint
-     * @param string $host
-     * @param float|null $timeout
-     * @return bool|null Null when the resolver did not answer.
+     * @return Repository|null
      */
-    private function blockedBy(string $endpoint, string $host, ?float $timeout): ?bool
+    private function store(): ?Repository
     {
-        $answers = $this->dns->query($endpoint, $host, 'A', 'screen', $timeout);
+        if (! config('laradomains.screen.cache_for')) {
+            return null;
+        }
 
-        return $answers === null ? null : in_array('0.0.0.0', $answers, true);
+        $store = Cache::store(config('laradomains.cache_store'));
+
+        return $store->getStore() instanceof ArrayStore || $store->getStore() instanceof NullStore ? null : $store;
     }
 }

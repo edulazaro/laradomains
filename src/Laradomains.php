@@ -8,6 +8,7 @@ use EduLazaro\Laradomains\Dns\DnsClient;
 use EduLazaro\Laradomains\Rdap\RdapClient;
 use EduLazaro\Laradomains\Rdap\Registration;
 use EduLazaro\Laradomains\Screen\Screen;
+use EduLazaro\Laradomains\Screen\Verdict;
 use EduLazaro\Laradomains\Support\Http;
 
 /**
@@ -85,6 +86,19 @@ class Laradomains
     public function screen(Domain|string $domain, bool $adult = true, ?float $timeout = null): string
     {
         return $this->screen->check($domain, $adult, $timeout);
+    }
+
+    /**
+     * Both screening answers, each on its own.
+     *
+     * @param Domain|string $domain
+     * @param bool $adult
+     * @param float|null $timeout
+     * @return Verdict
+     */
+    public function verdict(Domain|string $domain, bool $adult = true, ?float $timeout = null): Verdict
+    {
+        return $this->screen->verdict($domain, $adult, $timeout);
     }
 
     /**

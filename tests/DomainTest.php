@@ -90,4 +90,11 @@ class DomainTest extends TestCase
         $this->assertSame('ejemplo.com', Domain::parse('ejemplo.com:8080/x')->ascii);
         $this->assertSame('cdn.example.com', Domain::parse('//cdn.example.com/x.js')->ascii);
     }
+
+    public function test_a_web_scheme_without_slashes_still_names_the_host(): void
+    {
+        $this->assertSame('evil.example', Domain::parse('http:evil.example')->ascii);
+        $this->assertSame('evil.example', Domain::parse('https:evil.example/login')->ascii);
+        $this->assertSame('ejemplo.com', Domain::parse('ejemplo.com:443')->ascii);
+    }
 }

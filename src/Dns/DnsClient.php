@@ -5,6 +5,9 @@ namespace EduLazaro\Laradomains\Dns;
 use EduLazaro\Laradomains\Domain;
 use EduLazaro\Laradomains\Support\Http;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\Pool;
+use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http as Client;
 
 /**
  * DNS lookups, by default over HTTPS (the JSON API Cloudflare and Google expose), so the answer
@@ -125,8 +128,64 @@ final class DnsClient
             return null;
         }
 
-        // DNS status: 0 is an answer, 3 (NXDOMAIN) a definite "no such name"; anything else
-        // (SERVFAIL, REFUSED) means the question went unanswered.
+        return $this->parse($response, $type);
+    }
+
+    /**
+     * The same question to several resolvers at once, in parallel: key => records, or null for
+     * a resolver that did not answer. Unanswered ones are asked again, as a group, up to the
+     * service's retries.
+     *
+     * @param array<string, string> $endpoints key => resolver URL
+     * @param string $host
+     * @param string $type
+     * @param string $service
+     * @param float|null $timeout
+     * @return array<string, list<string>|null>
+     */
+    public function queryEach(array $endpoints, string $host, string $type, string $service = 'dns', ?float $timeout = null): array
+    {
+        [$retries, $delay] = Http::retryPolicy($service);
+        $results = array_fill_keys(array_keys($endpoints), null);
+        $pending = $endpoints;
+
+        for ($attempt = 0; $pending !== [] && $attempt <= $retries; $attempt++) {
+            if ($attempt > 0 && $delay > 0) {
+                usleep($delay * 1000);
+            }
+
+            $responses = Client::pool(function (Pool $pool) use ($pending, $host, $type, $service, $timeout) {
+                foreach ($pending as $key => $endpoint) {
+                    Http::configure($pool->as($key), $service, $timeout)
+                        ->accept('application/dns-json')
+                        ->get($endpoint, ['name' => $host, 'type' => $type]);
+                }
+            });
+
+            foreach ($pending as $key => $endpoint) {
+                $response = $responses[$key] ?? null;
+                $results[$key] = $response instanceof Response ? $this->parse($response, $type) : null;
+
+                if ($results[$key] !== null) {
+                    unset($pending[$key]);
+                }
+            }
+        }
+
+        return $results;
+    }
+
+    /**
+     * Records from a DNS-over-HTTPS answer, or null when it is not an answer. DNS status 0 is
+     * an answer and 3 (NXDOMAIN) a definite "no such name"; anything else (SERVFAIL, REFUSED)
+     * or an HTTP error means the question went unanswered.
+     *
+     * @param Response $response
+     * @param string $type
+     * @return list<string>|null
+     */
+    private function parse(Response $response, string $type): ?array
+    {
         $status = $response->successful() ? $response->json('Status') : null;
 
         if (! in_array($status, [0, 3], true)) {

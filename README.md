@@ -56,7 +56,7 @@ $site->registrable(private: true);  // "edulazaro.github.io" (the site the platf
 
 `www` is kept, since it is a host of its own; `withoutWww()` drops it when you treat both as one site.
 
-The host is read the way a browser reads it, which is what matters when deciding where a link really goes: a backslash ends the host as a slash does, so `https://evil.example\@paypal.com/login` is `evil.example`, not PayPal.
+The host is read the way a browser reads it, which is what matters when deciding where a link really goes: a backslash ends the host as a slash does, so `https://evil.example\@paypal.com/login` is `evil.example`, not PayPal, and a web scheme without slashes (`http:evil.example`) still names its host.
 
 ### Lookalikes
 
@@ -79,7 +79,7 @@ Domain::parse('paypalooza.com')->impersonates(['paypal.com']);             // nu
 Domain::parse('www.paypal.com')->impersonates(['paypal.com']);             // null: it is the brand
 ```
 
-Brand names under four letters only match as full copies, since `bbc` or `x` turn up inside ordinary names.
+Brand names under four letters only match as full copies, since `bbc` or `x` turn up inside ordinary names. A brand that is also a common word will still match ordinary sites (`apple.com` matches `apple-pie-recipes.com`), so treat `impersonates()` as a reason to review a link, not to block it; `imitates()`, a copy of the whole name, is the stronger signal.
 
 ### Keeping the lists current
 
@@ -166,7 +166,20 @@ Domains::screen('example.com', adult: false);  // malware and phishing only
 Domains::screen('example.com', timeout: 1.5);  // on a request path
 ```
 
-It fails closed: when a resolver cannot be asked (timeout, HTTP error, SERVFAIL) the answer is `Screen::UNKNOWN`, never `CLEAN`. "Could not look" and "found nothing" are different answers, and what `UNKNOWN` means (let through, hold for review, retry later) is the caller's decision. A name that does not exist (NXDOMAIN) is an answer, and clean.
+Both resolvers are asked in parallel, so the wait is the slower of the two. It fails closed: when a resolver cannot be asked (timeout, HTTP error, SERVFAIL) the answer is `Screen::UNKNOWN`, never `CLEAN`. "Could not look" and "found nothing" are different answers, and what `UNKNOWN` means (let through, hold for review, retry later) is the caller's decision. A name that does not exist (NXDOMAIN) is an answer, and clean.
+
+`Domains::verdict()` keeps the two answers apart, so one resolver failing does not hide what the other settled:
+
+```php
+$verdict = Domains::verdict('example.com');
+
+$verdict->malware;      // false: checked, not malware
+$verdict->adult;        // null: the adult resolver did not answer
+$verdict->decision();   // "unknown"
+$verdict->complete();   // false
+```
+
+To cache verdicts per host, set `LARADOMAINS_SCREEN_CACHE_FOR` in seconds: complete verdicts are kept that long, incomplete ones for `screen.retry_after` (60 by default), in a persistent store.
 
 The adult category is broad (it also catches piracy, cannabis shops and the odd false positive): treat it as a flag for review rather than as proof.
 
@@ -202,6 +215,11 @@ Domains::beforeRequest(function (string $service) {
     }
 });
 ```
+
+## Upgrading from 1.2
+
+- Screening asks both resolvers in parallel, so a domain the malware resolver blocks also gets an adult request; `Domains::verdict()` returns both answers.
+- `Screen::isMalware()` only asks the malware resolver, as before.
 
 ## Upgrading from 1.1
 

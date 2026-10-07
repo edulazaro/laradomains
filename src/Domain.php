@@ -309,7 +309,9 @@ final class Domain implements Stringable
         // Browsers treat "\" as "/" in web URLs (WHATWG URL standard), so it ends the host:
         // `https://evil.example\@paypal.com` goes to evil.example, and must parse as such.
         $value = str_replace('\\', '/', mb_strtolower(trim($input)));
-        $value = preg_replace('#^[a-z][a-z0-9+.-]*:(?=/)#', '', $value);
+        // A web scheme may come without slashes (`http:evil.example`) and browsers still go
+        // to the host; other schemes only count when followed by a slash.
+        $value = preg_replace('#^(?:(?:https?|wss?|ftp):|[a-z][a-z0-9+.-]*:(?=/))#', '', $value);
         $value = ltrim($value, '/');
         $value = preg_replace('#[/?\#].*$#s', '', $value);
         $value = preg_replace('#^.*@#', '', $value);

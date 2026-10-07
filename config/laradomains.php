@@ -109,12 +109,17 @@ return [
     |
     | Cloudflare's filtering resolvers answer 0.0.0.0 for names they block:
     | `security` blocks malware and phishing, `family` adds adult content.
+    | Both are asked in parallel.
     |
     */
 
     'screen' => [
         'malware' => 'https://security.cloudflare-dns.com/dns-query',
         'adult' => 'https://family.cloudflare-dns.com/dns-query',
+        // Seconds to keep a complete verdict per host, and an incomplete one (a resolver did
+        // not answer). Null (the default) asks every time.
+        'cache_for' => env('LARADOMAINS_SCREEN_CACHE_FOR'),
+        'retry_after' => 60,
     ],
 
     /*

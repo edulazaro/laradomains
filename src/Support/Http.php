@@ -43,15 +43,44 @@ final class Http
      */
     public static function for(string $service, ?float $timeout = null): PendingRequest
     {
+        return self::configure(Client::createPendingRequest(), $service, $timeout);
+    }
+
+    /**
+     * Prepare a request the way every request of the package is prepared: the hooks first,
+     * then the user agent and the service's timeouts. Also used on the requests of a pool,
+     * which Laravel creates itself.
+     *
+     * @param PendingRequest $request
+     * @param string $service
+     * @param float|null $timeout
+     * @return PendingRequest
+     */
+    public static function configure(PendingRequest $request, string $service, ?float $timeout = null): PendingRequest
+    {
         foreach (self::$before as $hook) {
             $hook($service);
         }
 
         $timeout ??= (float) (config("laradomains.timeouts.{$service}") ?? config('laradomains.timeout', 10));
 
-        return Client::withUserAgent((string) config('laradomains.user_agent'))
+        return $request->withUserAgent((string) config('laradomains.user_agent'))
             ->connectTimeout(min($timeout, 5))
             ->timeout($timeout);
+    }
+
+    /**
+     * How many times to try again after the first attempt, and the pause before each (ms).
+     *
+     * @param string $service
+     * @return array{int, int}
+     */
+    public static function retryPolicy(string $service): array
+    {
+        return [
+            (int) (config("laradomains.retries.{$service}") ?? config("laradomains.{$service}.retries", 0)),
+            (int) (config("laradomains.retry_delay.{$service}") ?? config("laradomains.{$service}.retry_delay", 200)),
+        ];
     }
 
     /**
@@ -64,8 +93,7 @@ final class Http
      */
     public static function withRetries(PendingRequest $request, string $service): PendingRequest
     {
-        $retries = (int) (config("laradomains.retries.{$service}") ?? config("laradomains.{$service}.retries", 0));
-        $delay = (int) (config("laradomains.retry_delay.{$service}") ?? config("laradomains.{$service}.retry_delay", 200));
+        [$retries, $delay] = self::retryPolicy($service);
 
         return $retries > 0 ? $request->retry($retries + 1, $delay, throw: false) : $request;
     }
