@@ -176,10 +176,10 @@ Http::fake([
 Laradomains is supported by the following sponsors. Thank you for keeping it growing:
 
 <p>
-  <a href="https://kenodo.com"><img src="art/logo-kenodo.png" width="24" alt="Kenodo"></a>&nbsp;<a href="https://kenodo.com">Kenodo</a>&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://andorradev.com"><img src="art/logo-andorradev.png" width="24" alt="AndorraDev"></a>&nbsp;<a href="https://andorradev.com">AndorraDev</a>&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://valorweb.org"><img src="art/logo-valorweb.png" width="24" alt="Valor Web"></a>&nbsp;<a href="https://valorweb.org">Valor Web</a>&nbsp;&nbsp;&nbsp;&nbsp;
-  <a href="https://toxicfilter.com"><img src="art/logo-toxicfilter.png" width="24" alt="ToxicFilter"></a>&nbsp;<a href="https://toxicfilter.com">ToxicFilter</a>
+  <a href="https://kenodo.com"><img src="art/logo-kenodo.png" height="28" alt="Kenodo"></a>&nbsp;<a href="https://kenodo.com">Kenodo</a>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://andorradev.com"><img src="art/logo-andorradev.png" height="28" alt="AndorraDev"></a>&nbsp;<a href="https://andorradev.com">AndorraDev</a>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://valorweb.org"><img src="art/logo-valorweb.png" height="28" alt="Valor Web"></a>&nbsp;<a href="https://valorweb.org">Valor Web</a>&nbsp;&nbsp;&nbsp;&nbsp;
+  <a href="https://toxicfilter.com"><img src="art/logo-toxicfilter.png" height="28" alt="ToxicFilter"></a>&nbsp;<a href="https://toxicfilter.com">ToxicFilter</a>
 </p>
 
 ## Author
