@@ -38,15 +38,16 @@ final class DomainAge
      * @param bool $wayback Fall back to the first Wayback capture.
      * @param float|null $timeout Seconds for each request of this call.
      * @param bool $certificates Fall back to the first certificate in the CT logs.
+     * @param int|null $retries For each request of this call; otherwise each service's config.
      * @return Age|null Null when the age is unknown, for whatever reason.
      */
-    public function of(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false): ?Age
+    public function of(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false, ?int $retries = null): ?Age
     {
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
         $store = $this->store();
 
         if ($store === null) {
-            return $this->lookup($domain, $wayback, $timeout, $certificates)[0];
+            return $this->lookup($domain, $wayback, $timeout, $certificates, $retries)[0];
         }
 
         $key = 'laradomains.age.'.($wayback ? 'w.' : '').($certificates ? 'c.' : '').($domain->registrable() ?? $domain->ascii);
@@ -56,7 +57,7 @@ final class DomainAge
             return is_array($cached) ? new Age(CarbonImmutable::parse($cached['since']), $cached['source']) : null;
         }
 
-        [$age, $definite] = $this->lookup($domain, $wayback, $timeout, $certificates);
+        [$age, $definite] = $this->lookup($domain, $wayback, $timeout, $certificates, $retries);
         $ttl = (int) ($definite ? config('laradomains.age.cache_for') : config('laradomains.age.retry_after', 300));
 
         if ($ttl > 0) {
@@ -75,11 +76,12 @@ final class DomainAge
      * @param bool $wayback
      * @param float|null $timeout
      * @param bool $certificates
+     * @param int|null $retries
      * @return array{Age|null, bool}
      */
-    private function lookup(Domain $domain, bool $wayback, ?float $timeout, bool $certificates = false): array
+    private function lookup(Domain $domain, bool $wayback, ?float $timeout, bool $certificates = false, ?int $retries = null): array
     {
-        $registration = $this->rdap->lookup($domain, $timeout);
+        $registration = $this->rdap->lookup($domain, $timeout, $retries);
 
         if ($registration->registeredAt !== null) {
             return [new Age($registration->registeredAt, Age::RDAP), true];
@@ -94,8 +96,8 @@ final class DomainAge
         }
 
         $found = array_filter([
-            Age::CERTIFICATES => $certificates ? $this->firstCertificate($domain, $timeout) : null,
-            Age::WAYBACK => $wayback ? $this->firstCapture($domain, $timeout) : null,
+            Age::CERTIFICATES => $certificates ? $this->firstCertificate($domain, $timeout, $retries) : null,
+            Age::WAYBACK => $wayback ? $this->firstCapture($domain, $timeout, $retries) : null,
         ]);
 
         if ($found === []) {
@@ -117,14 +119,15 @@ final class DomainAge
      *
      * @param Domain|string $domain
      * @param float|null $timeout
+     * @param int|null $retries
      * @return CarbonImmutable|null
      */
-    public function firstCertificate(Domain|string $domain, ?float $timeout = null): ?CarbonImmutable
+    public function firstCertificate(Domain|string $domain, ?float $timeout = null, ?int $retries = null): ?CarbonImmutable
     {
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
 
         try {
-            $response = Http::withRetries(Http::for('certificates', $timeout)->accept('application/json')->withOptions(['stream' => true]), 'certificates')
+            $response = Http::withRetries(Http::for('certificates', $timeout)->accept('application/json')->withOptions(['stream' => true]), 'certificates', $retries)
                 ->get((string) config('laradomains.certificates.endpoint', 'https://crt.sh/'), [
                     'identity' => $domain->registrable() ?? $domain->ascii,
                     'match' => '=',
@@ -192,14 +195,15 @@ final class DomainAge
     /**
      * @param Domain|string $domain
      * @param float|null $timeout
+     * @param int|null $retries
      * @return CarbonImmutable|null
      */
-    public function firstCapture(Domain|string $domain, ?float $timeout = null): ?CarbonImmutable
+    public function firstCapture(Domain|string $domain, ?float $timeout = null, ?int $retries = null): ?CarbonImmutable
     {
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
 
         try {
-            $response = Http::withRetries(Http::for('wayback', $timeout), 'wayback')
+            $response = Http::withRetries(Http::for('wayback', $timeout), 'wayback', $retries)
                 ->get((string) config('laradomains.wayback.endpoint'), [
                     'url' => $domain->registrable() ?? $domain->ascii,
                     'limit' => 1,

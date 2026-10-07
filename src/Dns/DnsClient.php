@@ -117,12 +117,13 @@ final class DnsClient
      * @param string $type
      * @param string $service
      * @param float|null $timeout
+     * @param int|null $retries
      * @return list<string>|null
      */
-    public function query(string $endpoint, string $host, string $type, string $service = 'dns', ?float $timeout = null): ?array
+    public function query(string $endpoint, string $host, string $type, string $service = 'dns', ?float $timeout = null, ?int $retries = null): ?array
     {
         try {
-            $response = Http::withRetries(Http::for($service, $timeout)->accept('application/dns-json'), $service)
+            $response = Http::withRetries(Http::for($service, $timeout)->accept('application/dns-json'), $service, $retries)
                 ->get($endpoint, ['name' => $host, 'type' => $type]);
         } catch (ConnectionException) {
             return null;
@@ -141,11 +142,12 @@ final class DnsClient
      * @param string $type
      * @param string $service
      * @param float|null $timeout
+     * @param int|null $retries Rounds after the first; otherwise the service's config.
      * @return array<string, list<string>|null>
      */
-    public function queryEach(array $endpoints, string $host, string $type, string $service = 'dns', ?float $timeout = null): array
+    public function queryEach(array $endpoints, string $host, string $type, string $service = 'dns', ?float $timeout = null, ?int $retries = null): array
     {
-        [$retries, $delay] = Http::retryPolicy($service);
+        [$retries, $delay] = Http::retryPolicy($service, $retries);
         $results = array_fill_keys(array_keys($endpoints), null);
         $pending = $endpoints;
 

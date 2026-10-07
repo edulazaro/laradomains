@@ -43,11 +43,12 @@ final class Screen
      * @param Domain|string $domain
      * @param bool $adult Also ask the family resolver.
      * @param float|null $timeout Seconds for the resolvers; otherwise `timeouts.screen`.
+     * @param int|null $retries Rounds after the first; otherwise `retries.screen`.
      * @return string One of the class constants.
      */
-    public function check(Domain|string $domain, bool $adult = true, ?float $timeout = null): string
+    public function check(Domain|string $domain, bool $adult = true, ?float $timeout = null, ?int $retries = null): string
     {
-        return $this->verdict($domain, $adult, $timeout)->decision();
+        return $this->verdict($domain, $adult, $timeout, $retries)->decision();
     }
 
     /**
@@ -56,9 +57,10 @@ final class Screen
      * @param Domain|string $domain
      * @param bool $adult
      * @param float|null $timeout
+     * @param int|null $retries
      * @return Verdict
      */
-    public function verdict(Domain|string $domain, bool $adult = true, ?float $timeout = null): Verdict
+    public function verdict(Domain|string $domain, bool $adult = true, ?float $timeout = null, ?int $retries = null): Verdict
     {
         $host = $domain instanceof Domain ? $domain->ascii : Domain::parse($domain)->ascii;
         $store = $this->store();
@@ -74,7 +76,7 @@ final class Screen
             $endpoints['adult'] = (string) config('laradomains.screen.adult');
         }
 
-        $answers = $this->dns->queryEach($endpoints, $host, 'A', 'screen', $timeout);
+        $answers = $this->dns->queryEach($endpoints, $host, 'A', 'screen', $timeout, $retries);
         $blocked = fn (?array $records) => $records === null ? null : in_array('0.0.0.0', $records, true);
 
         $verdict = new Verdict($host, $blocked($answers['malware']), $adult ? $blocked($answers['adult']) : null, $adult);
@@ -96,11 +98,12 @@ final class Screen
      *
      * @param Domain|string $domain
      * @param float|null $timeout
+     * @param int|null $retries
      * @return bool|null
      */
-    public function isMalware(Domain|string $domain, ?float $timeout = null): ?bool
+    public function isMalware(Domain|string $domain, ?float $timeout = null, ?int $retries = null): ?bool
     {
-        return $this->verdict($domain, adult: false, timeout: $timeout)->malware;
+        return $this->verdict($domain, adult: false, timeout: $timeout, retries: $retries)->malware;
     }
 
     /**

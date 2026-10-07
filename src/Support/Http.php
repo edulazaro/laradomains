@@ -73,12 +73,13 @@ final class Http
      * How many times to try again after the first attempt, and the pause before each (ms).
      *
      * @param string $service
+     * @param int|null $retries For this call; null takes `retries.<service>` from the config.
      * @return array{int, int}
      */
-    public static function retryPolicy(string $service): array
+    public static function retryPolicy(string $service, ?int $retries = null): array
     {
         return [
-            (int) (config("laradomains.retries.{$service}") ?? config("laradomains.{$service}.retries", 0)),
+            max(0, $retries ?? (int) (config("laradomains.retries.{$service}") ?? config("laradomains.{$service}.retries", 0))),
             (int) (config("laradomains.retry_delay.{$service}") ?? config("laradomains.{$service}.retry_delay", 200)),
         ];
     }
@@ -89,11 +90,12 @@ final class Http
      *
      * @param PendingRequest $request
      * @param string $service
+     * @param int|null $retries For this call; null takes the config, 0 means a single attempt.
      * @return PendingRequest
      */
-    public static function withRetries(PendingRequest $request, string $service): PendingRequest
+    public static function withRetries(PendingRequest $request, string $service, ?int $retries = null): PendingRequest
     {
-        [$retries, $delay] = self::retryPolicy($service);
+        [$retries, $delay] = self::retryPolicy($service, $retries);
 
         return $retries > 0 ? $request->retry($retries + 1, $delay, throw: false) : $request;
     }

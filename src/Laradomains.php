@@ -51,11 +51,12 @@ class Laradomains
     /**
      * @param Domain|string $domain
      * @param float|null $timeout
+     * @param int|null $retries
      * @return Registration
      */
-    public function rdap(Domain|string $domain, ?float $timeout = null): Registration
+    public function rdap(Domain|string $domain, ?float $timeout = null, ?int $retries = null): Registration
     {
-        return $this->rdap->lookup($domain, $timeout);
+        return $this->rdap->lookup($domain, $timeout, $retries);
     }
 
     /**
@@ -63,11 +64,12 @@ class Laradomains
      * @param bool $wayback
      * @param float|null $timeout
      * @param bool $certificates
+     * @param int|null $retries
      * @return Age|null
      */
-    public function age(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false): ?Age
+    public function age(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false, ?int $retries = null): ?Age
     {
-        return $this->age->of($domain, $wayback, $timeout, $certificates);
+        return $this->age->of($domain, $wayback, $timeout, $certificates, $retries);
     }
 
     /**
@@ -82,11 +84,12 @@ class Laradomains
      * @param Domain|string $domain
      * @param bool $adult
      * @param float|null $timeout
+     * @param int|null $retries
      * @return string Screen::CLEAN, MALWARE, ADULT or UNKNOWN.
      */
-    public function screen(Domain|string $domain, bool $adult = true, ?float $timeout = null): string
+    public function screen(Domain|string $domain, bool $adult = true, ?float $timeout = null, ?int $retries = null): string
     {
-        return $this->screen->check($domain, $adult, $timeout);
+        return $this->screen->check($domain, $adult, $timeout, $retries);
     }
 
     /**
@@ -95,16 +98,17 @@ class Laradomains
      * @param Domain|string $domain
      * @param bool $adult
      * @param float|null $timeout
+     * @param int|null $retries
      * @return Verdict
      */
-    public function verdict(Domain|string $domain, bool $adult = true, ?float $timeout = null): Verdict
+    public function verdict(Domain|string $domain, bool $adult = true, ?float $timeout = null, ?int $retries = null): Verdict
     {
-        return $this->screen->verdict($domain, $adult, $timeout);
+        return $this->screen->verdict($domain, $adult, $timeout, $retries);
     }
 
     /**
      * Run a callback before every outgoing request, with the service name (`rdap`, `dns`,
-     * `screen`, `wayback`). The place for a rate limiter.
+     * `screen`, `wayback`, `certificates`). The place for a rate limiter.
      *
      * @param callable(string): void $hook
      * @return void
