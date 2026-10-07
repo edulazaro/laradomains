@@ -95,4 +95,28 @@ class VerdictTest extends TestCase
 
         Http::assertSentCount(2);
     }
+
+    public function test_a_family_block_without_the_malware_answer_is_not_called_adult(): void
+    {
+        Http::fake([
+            'security.cloudflare-dns.com/*' => Http::response('', 503),
+            'family.cloudflare-dns.com/*' => Http::response($this->answer('0.0.0.0')),
+        ]);
+
+        $verdict = Domains::verdict('either.example');
+
+        $this->assertSame(Screen::UNKNOWN, $verdict->decision());   // malware or adult: cannot tell
+        $this->assertTrue($verdict->blocked());                     // but blocked either way
+    }
+
+    public function test_blocked_is_false_only_when_every_answer_is_in(): void
+    {
+        Http::fake([
+            'security.cloudflare-dns.com/*' => Http::response($this->answer('93.184.215.14')),
+            'family.cloudflare-dns.com/*' => Http::response('', 503),
+        ]);
+
+        $this->assertNull(Domains::verdict('example.com')->blocked());
+        $this->assertFalse(Domains::verdict('example.com', adult: false)->blocked());
+    }
 }

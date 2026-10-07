@@ -7,6 +7,10 @@ namespace EduLazaro\Laradomains\Screen;
  * not blocked) or null (could not be checked, or not asked). Keeping them apart means a
  * failure of one does not hide what the other already settled: a domain the malware resolver
  * cleared is not malware, even if the adult resolver timed out.
+ *
+ * `adult` is the family resolver's answer, and that resolver blocks malware as well as adult
+ * content: its block alone says "malware or adult", which decision() reads as UNKNOWN unless
+ * the malware resolver has answered. blocked() says whether anything blocked it at all.
  */
 final class Verdict
 {
@@ -24,8 +28,10 @@ final class Verdict
     ) {}
 
     /**
-     * One word for the whole verdict: MALWARE wins whenever it was found, then ADULT, then
-     * CLEAN when everything asked was answered, and UNKNOWN when something asked was not.
+     * One word for the whole verdict: MALWARE whenever the malware resolver found it; ADULT
+     * only when the malware resolver cleared the domain and the family one blocked it (that
+     * resolver blocks malware too, so without the first answer its block could be either);
+     * CLEAN when everything asked was answered and nothing blocked; UNKNOWN otherwise.
      *
      * @return string Screen::CLEAN, MALWARE, ADULT or UNKNOWN.
      */
@@ -35,7 +41,7 @@ final class Verdict
             return Screen::MALWARE;
         }
 
-        if ($this->adultAsked && $this->adult === true) {
+        if ($this->malware === false && $this->adultAsked && $this->adult === true) {
             return Screen::ADULT;
         }
 
@@ -44,6 +50,22 @@ final class Verdict
         }
 
         return Screen::UNKNOWN;
+    }
+
+    /**
+     * Whether any resolver blocked the domain, for a caller that only needs to know if it is
+     * blocked, whatever the reason: true as soon as one did, false when every one asked
+     * answered without blocking, null otherwise.
+     *
+     * @return bool|null
+     */
+    public function blocked(): ?bool
+    {
+        if ($this->malware === true || ($this->adultAsked && $this->adult === true)) {
+            return true;
+        }
+
+        return $this->complete() ? false : null;
     }
 
     /**

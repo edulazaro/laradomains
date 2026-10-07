@@ -177,7 +177,10 @@ $verdict->malware;      // false: checked, not malware
 $verdict->adult;        // null: the adult resolver did not answer
 $verdict->decision();   // "unknown"
 $verdict->complete();   // false
+$verdict->blocked();    // null: nothing blocked it, but not everything answered
 ```
+
+The family resolver blocks malware as well as adult content, so its block alone means "malware or adult": `decision()` says `adult` only when the malware resolver has cleared the domain, and `unknown` otherwise. `blocked()` is true as soon as any resolver blocked it, for a caller that only needs to know whether to stop the link.
 
 To cache verdicts per host, set `LARADOMAINS_SCREEN_CACHE_FOR` in seconds: complete verdicts are kept that long, incomplete ones for `screen.retry_after` (60 by default), in a persistent store.
 
