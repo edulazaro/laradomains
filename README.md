@@ -237,7 +237,7 @@ $verdict->complete();   // false
 $verdict->blocked();    // null: nothing blocked it, but not everything answered
 ```
 
-The family resolver blocks malware as well as adult content, so its block alone means "malware or adult": `decision()` says `adult` only when the malware resolver has cleared the domain, and `unknown` otherwise. `blocked()` is true as soon as any resolver blocked it, for a caller that only needs to know whether to stop the link.
+The family resolver blocks malware as well as adult content, so its block alone means "malware or adult": `decision()` says `adult` only when the malware resolver has cleared the domain, and `unknown` otherwise. `blocked()` is true as soon as any resolver blocked it, for a caller that only needs to know whether to stop the link. `Screen::isMalware()` asks only the malware resolver and answers `true`, `false`, or `null` when it could not check.
 
 To cache verdicts per host, set `LARADOMAINS_SCREEN_CACHE_FOR` in seconds: complete verdicts are kept that long, incomplete ones for `screen.retry_after` (60 by default), in a persistent store.
 
@@ -293,32 +293,6 @@ Domains::beforeRequest(function (string $service) {
     }
 });
 ```
-
-## Upgrading from 1.5
-
-`DnsClient::acceptsMail()` returns `?bool` instead of `bool`, and follows the implicit MX:
-
-| | 1.5 | 1.6 |
-|---|---|---|
-| The MX lookup fails (timeout, HTTP error, SERVFAIL) | `false` | `null` |
-| No MX, but an A or AAAA record | `false` | `true` |
-| No MX and no address, or no such name | `false` | `false` |
-| A null MX (`0 .`) | `false` | `false` |
-
-`if (! $dns->acceptsMail($domain))` keeps working, since `null` is falsy, but now also stops on "could not tell". Code that compares with `=== false` no longer sees DNS failures: check for `null` where it should be treated as "check later".
-
-Also new, and compatible: `Domains::ageCheck()`, and a `retries` argument on every network call. When RDAP fails, `age()` now tries the fallbacks asked for (`certificates`, `wayback`) instead of giving up; it still returns `null` when none finds a date. Age entries cached by 1.5 are looked up again once.
-
-## Upgrading from 1.2
-
-- Screening asks both resolvers in parallel, so a domain the malware resolver blocks also gets an adult request; `Domains::verdict()` returns both answers.
-- `Screen::isMalware()` only asks the malware resolver, as before.
-
-## Upgrading from 1.1
-
-- `Domains::screen()` can return `Screen::UNKNOWN`; `Screen::isMalware()` returns `null` when it could not check.
-- The Wayback retries moved to `retries.wayback` and `retry_delay.wayback`, and count the tries after the first one. Old `wayback.retries` keys are still read.
-- The age cache is keyed by the registrable domain and also keeps failures for `age.retry_after`.
 
 ## Testing
 
