@@ -22,9 +22,10 @@ use Throwable;
  * requests a minute, which is fine in a queued job and wrong on a request path.
  *
  * Age belongs to the registrable domain, so `a.spam.io` and `b.spam.io` are one question, and
- * that is the cache key. With `age.cache_for` set, definite answers are kept that long and a
- * failed lookup for `age.retry_after` seconds: a spam campaign sends the same new domain in
- * every message, and must not cost one registry request per message.
+ * that is the cache key. With `age.cache_for` set, complete answers (found or none, every
+ * source answered) are kept that long, and the rest (unknown, or found while a source failed)
+ * for `age.retry_after` seconds: a spam campaign sends the same new domain in every message,
+ * and must not cost one registry request per message. The whole AgeCheck is cached.
  */
 final class DomainAge
 {
@@ -43,70 +44,104 @@ final class DomainAge
      */
     public function of(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false, ?int $retries = null): ?Age
     {
+        return $this->check($domain, $wayback, $timeout, $certificates, $retries)->age;
+    }
+
+    /**
+     * The age with how it was settled: found, none (a definite answer without a date) or
+     * unknown (a lookup failed), the reason and the sources that failed.
+     *
+     * @param Domain|string $domain
+     * @param bool $wayback
+     * @param float|null $timeout
+     * @param bool $certificates
+     * @param int|null $retries
+     * @return AgeCheck
+     */
+    public function check(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false, ?int $retries = null): AgeCheck
+    {
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
         $store = $this->store();
 
         if ($store === null) {
-            return $this->lookup($domain, $wayback, $timeout, $certificates, $retries)[0];
+            return $this->lookup($domain, $wayback, $timeout, $certificates, $retries);
         }
 
         $key = 'laradomains.age.'.($wayback ? 'w.' : '').($certificates ? 'c.' : '').($domain->registrable() ?? $domain->ascii);
         $cached = $store->get($key);
 
-        if ($cached !== null) {
-            return is_array($cached) ? new Age(CarbonImmutable::parse($cached['since']), $cached['source']) : null;
+        if (is_array($cached) && ($check = AgeCheck::fromArray($cached)) !== null) {
+            return $check;
         }
 
-        [$age, $definite] = $this->lookup($domain, $wayback, $timeout, $certificates, $retries);
-        $ttl = (int) ($definite ? config('laradomains.age.cache_for') : config('laradomains.age.retry_after', 300));
+        $check = $this->lookup($domain, $wayback, $timeout, $certificates, $retries);
+
+        // A found age with a failed source may change once that source answers (RDAP down,
+        // a date from certificates meanwhile), so it is kept as briefly as a failure.
+        $ttl = (int) ($check->definite() && $check->complete()
+            ? config('laradomains.age.cache_for')
+            : config('laradomains.age.retry_after', 300));
 
         if ($ttl > 0) {
-            $store->put($key, $age === null ? 'unknown' : ['since' => $age->since->toIso8601String(), 'source' => $age->source], $ttl);
+            $store->put($key, $check->toArray(), $ttl);
         }
 
-        return $age;
+        return $check;
     }
 
     /**
-     * The age, and whether the answer is definite (a date, or a registry saying there is none
-     * to give) rather than the result of a lookup that failed. Without a registration date,
-     * the fallbacks asked for are tried and the earliest date wins: both are lower bounds.
+     * RDAP first. Without a registration date, the fallbacks asked for are tried, also when
+     * RDAP failed, and the earliest date wins: both are lower bounds. Any date is `found`, with
+     * the sources that failed alongside; no date and a failure is `unknown`; `none` only when
+     * every source asked answered. Its reason is that of the last source asked.
      *
      * @param Domain $domain
      * @param bool $wayback
      * @param float|null $timeout
      * @param bool $certificates
      * @param int|null $retries
-     * @return array{Age|null, bool}
+     * @return AgeCheck
      */
-    private function lookup(Domain $domain, bool $wayback, ?float $timeout, bool $certificates = false, ?int $retries = null): array
+    private function lookup(Domain $domain, bool $wayback, ?float $timeout, bool $certificates, ?int $retries): AgeCheck
     {
         $registration = $this->rdap->lookup($domain, $timeout, $retries);
 
         if ($registration->registeredAt !== null) {
-            return [new Age($registration->registeredAt, Age::RDAP), true];
+            return AgeCheck::withAge(new Age($registration->registeredAt, Age::RDAP));
         }
 
-        if ($registration->failed()) {
-            return [null, false];
+        if ($registration->registered === false) {
+            return AgeCheck::withoutAge(AgeCheck::NOT_REGISTERED);
         }
 
-        if ((! $wayback && ! $certificates) || $registration->registered === false) {
-            return [null, true];
-        }
+        $failed = $registration->failed() ? [Age::RDAP] : [];
+        $reason = $registration->supported ? AgeCheck::NO_REGISTRATION_DATE : AgeCheck::UNSUPPORTED_TLD;
+        $found = [];
 
-        $found = array_filter([
-            Age::CERTIFICATES => $certificates ? $this->firstCertificate($domain, $timeout, $retries) : null,
-            Age::WAYBACK => $wayback ? $this->firstCapture($domain, $timeout, $retries) : null,
+        $fallbacks = array_filter([
+            Age::CERTIFICATES => $certificates ? fn () => $this->certificates($domain, $timeout, $retries) : null,
+            Age::WAYBACK => $wayback ? fn () => $this->captures($domain, $timeout, $retries) : null,
         ]);
 
-        if ($found === []) {
-            return [null, false];
+        foreach ($fallbacks as $source => $probe) {
+            [$date, $answered] = $probe();
+
+            if (! $answered) {
+                $failed[] = $source;
+            } elseif ($date !== null) {
+                $found[$source] = $date;
+            } else {
+                $reason = $source === Age::CERTIFICATES ? AgeCheck::NO_CERTIFICATES : AgeCheck::NO_CAPTURES;
+            }
         }
 
-        asort($found);
+        if ($found !== []) {
+            asort($found);
 
-        return [new Age(reset($found), (string) key($found)), true];
+            return AgeCheck::withAge(new Age(reset($found), (string) key($found)), $failed);
+        }
+
+        return $failed === [] ? AgeCheck::withoutAge($reason) : AgeCheck::lookupFailed($failed);
     }
 
     /**
@@ -124,8 +159,19 @@ final class DomainAge
      */
     public function firstCertificate(Domain|string $domain, ?float $timeout = null, ?int $retries = null): ?CarbonImmutable
     {
-        $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
+        return $this->certificates($domain instanceof Domain ? $domain : Domain::parse($domain), $timeout, $retries)[0];
+    }
 
+    /**
+     * The first certificate, and whether crt.sh answered (false: the date is unknown, not absent).
+     *
+     * @param Domain $domain
+     * @param float|null $timeout
+     * @param int|null $retries
+     * @return array{CarbonImmutable|null, bool}
+     */
+    private function certificates(Domain $domain, ?float $timeout, ?int $retries): array
+    {
         try {
             $response = Http::withRetries(Http::for('certificates', $timeout)->accept('application/json')->withOptions(['stream' => true]), 'certificates', $retries)
                 ->get((string) config('laradomains.certificates.endpoint', 'https://crt.sh/'), [
@@ -135,11 +181,11 @@ final class DomainAge
                     'output' => 'json',
                 ]);
         } catch (ConnectionException) {
-            return null;
+            return [null, false];
         }
 
         if (! $response->successful()) {
-            return null;
+            return [null, false];
         }
 
         // Read as a stream, up to a limit, and pick the dates out of what arrived instead of
@@ -149,6 +195,7 @@ final class DomainAge
         $body = $response->toPsrResponse()->getBody();
         $limit = (int) config('laradomains.certificates.max_bytes', 2_000_000);
         $read = '';
+        $complete = true;
 
         try {
             while (! $body->eof() && strlen($read) < $limit) {
@@ -156,6 +203,7 @@ final class DomainAge
             }
         } catch (Throwable) {
             // A connection dropped halfway still leaves what was read.
+            $complete = false;
         } finally {
             $body->close();
         }
@@ -163,15 +211,16 @@ final class DomainAge
         preg_match_all('/"not_before"\s*:\s*"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})/', $read, $matches);
 
         if ($matches[1] === []) {
-            return null;
+            // An answer cut off before its first certificate says nothing; a whole one, "none".
+            return [null, $complete && trim($read) !== ''];
         }
 
         sort($matches[1]);
 
         try {
-            return CarbonImmutable::parse($matches[1][0], 'UTC');
+            return [CarbonImmutable::parse($matches[1][0], 'UTC'), true];
         } catch (Throwable) {
-            return null;
+            return [null, false];
         }
     }
 
@@ -200,8 +249,19 @@ final class DomainAge
      */
     public function firstCapture(Domain|string $domain, ?float $timeout = null, ?int $retries = null): ?CarbonImmutable
     {
-        $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
+        return $this->captures($domain instanceof Domain ? $domain : Domain::parse($domain), $timeout, $retries)[0];
+    }
 
+    /**
+     * The first Wayback capture, and whether the CDX server answered.
+     *
+     * @param Domain $domain
+     * @param float|null $timeout
+     * @param int|null $retries
+     * @return array{CarbonImmutable|null, bool}
+     */
+    private function captures(Domain $domain, ?float $timeout, ?int $retries): array
+    {
         try {
             $response = Http::withRetries(Http::for('wayback', $timeout), 'wayback', $retries)
                 ->get((string) config('laradomains.wayback.endpoint'), [
@@ -211,19 +271,24 @@ final class DomainAge
                     'fl' => 'timestamp',
                 ]);
         } catch (ConnectionException) {
-            return null;
+            return [null, false];
         }
 
-        $timestamp = $response->successful() ? $response->json('1.0') : null;
+        if (! $response->successful() || ! is_array($response->json())) {
+            return [null, false];
+        }
+
+        // An answer with no captures is [] (or only the header row).
+        $timestamp = $response->json('1.0');
 
         if (! is_string($timestamp)) {
-            return null;
+            return [null, true];
         }
 
         try {
-            return CarbonImmutable::createFromFormat('YmdHis', $timestamp, 'UTC') ?: null;
+            return [CarbonImmutable::createFromFormat('YmdHis', $timestamp, 'UTC') ?: null, true];
         } catch (Throwable) {
-            return null;
+            return [null, false];
         }
     }
 }

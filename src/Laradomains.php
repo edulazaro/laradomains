@@ -3,6 +3,7 @@
 namespace EduLazaro\Laradomains;
 
 use EduLazaro\Laradomains\Age\Age;
+use EduLazaro\Laradomains\Age\AgeCheck;
 use EduLazaro\Laradomains\Age\DomainAge;
 use EduLazaro\Laradomains\Dns\DnsClient;
 use EduLazaro\Laradomains\Rdap\RdapClient;
@@ -70,6 +71,21 @@ class Laradomains
     public function age(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false, ?int $retries = null): ?Age
     {
         return $this->age->of($domain, $wayback, $timeout, $certificates, $retries);
+    }
+
+    /**
+     * The age with how it was settled: found, none or unknown, the reason and the failed sources.
+     *
+     * @param Domain|string $domain
+     * @param bool $wayback
+     * @param float|null $timeout
+     * @param bool $certificates
+     * @param int|null $retries
+     * @return AgeCheck
+     */
+    public function ageCheck(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false, ?int $retries = null): AgeCheck
+    {
+        return $this->age->check($domain, $wayback, $timeout, $certificates, $retries);
     }
 
     /**
