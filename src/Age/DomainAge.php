@@ -14,8 +14,9 @@ use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 /**
- * A domain's age: the registration date over RDAP and, only when asked for, the first Wayback
- * Machine capture for TLDs whose registry publishes no date (.es, .de, .it, .io...).
+ * A domain's age: the registration date over RDAP and, only when asked for, two lower bounds
+ * for TLDs whose registry publishes no date (.es, .de, .it, .io...): the first certificate in
+ * the Certificate Transparency logs and the first Wayback Machine capture.
  *
  * The Wayback fallback is off by default: the CDX server is slow and allows about a dozen
  * requests a minute, which is fine in a queued job and wrong on a request path.
@@ -36,25 +37,26 @@ final class DomainAge
      * @param Domain|string $domain
      * @param bool $wayback Fall back to the first Wayback capture.
      * @param float|null $timeout Seconds for each request of this call.
+     * @param bool $certificates Fall back to the first certificate in the CT logs.
      * @return Age|null Null when the age is unknown, for whatever reason.
      */
-    public function of(Domain|string $domain, bool $wayback = false, ?float $timeout = null): ?Age
+    public function of(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false): ?Age
     {
         $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
         $store = $this->store();
 
         if ($store === null) {
-            return $this->lookup($domain, $wayback, $timeout)[0];
+            return $this->lookup($domain, $wayback, $timeout, $certificates)[0];
         }
 
-        $key = 'laradomains.age.'.($wayback ? 'w.' : '').($domain->registrable() ?? $domain->ascii);
+        $key = 'laradomains.age.'.($wayback ? 'w.' : '').($certificates ? 'c.' : '').($domain->registrable() ?? $domain->ascii);
         $cached = $store->get($key);
 
         if ($cached !== null) {
             return is_array($cached) ? new Age(CarbonImmutable::parse($cached['since']), $cached['source']) : null;
         }
 
-        [$age, $definite] = $this->lookup($domain, $wayback, $timeout);
+        [$age, $definite] = $this->lookup($domain, $wayback, $timeout, $certificates);
         $ttl = (int) ($definite ? config('laradomains.age.cache_for') : config('laradomains.age.retry_after', 300));
 
         if ($ttl > 0) {
@@ -66,14 +68,16 @@ final class DomainAge
 
     /**
      * The age, and whether the answer is definite (a date, or a registry saying there is none
-     * to give) rather than the result of a lookup that failed.
+     * to give) rather than the result of a lookup that failed. Without a registration date,
+     * the fallbacks asked for are tried and the earliest date wins: both are lower bounds.
      *
      * @param Domain $domain
      * @param bool $wayback
      * @param float|null $timeout
+     * @param bool $certificates
      * @return array{Age|null, bool}
      */
-    private function lookup(Domain $domain, bool $wayback, ?float $timeout): array
+    private function lookup(Domain $domain, bool $wayback, ?float $timeout, bool $certificates = false): array
     {
         $registration = $this->rdap->lookup($domain, $timeout);
 
@@ -85,13 +89,72 @@ final class DomainAge
             return [null, false];
         }
 
-        if (! $wayback || $registration->registered === false) {
+        if ((! $wayback && ! $certificates) || $registration->registered === false) {
             return [null, true];
         }
 
-        $first = $this->firstCapture($domain, $timeout);
+        $found = array_filter([
+            Age::CERTIFICATES => $certificates ? $this->firstCertificate($domain, $timeout) : null,
+            Age::WAYBACK => $wayback ? $this->firstCapture($domain, $timeout) : null,
+        ]);
 
-        return $first === null ? [null, false] : [new Age($first, Age::WAYBACK), true];
+        if ($found === []) {
+            return [null, false];
+        }
+
+        asort($found);
+
+        return [new Age(reset($found), (string) key($found)), true];
+    }
+
+    /**
+     * The first certificate issued for the registrable domain, from crt.sh's copy of the
+     * Certificate Transparency logs: every publicly trusted certificate is logged there, and a
+     * phishing domain usually gets one the day it is registered, so this answers "how new is
+     * it" for TLDs without RDAP. A domain that never used HTTPS has none.
+     *
+     * crt.sh is a free service and not always up; a failure is null, never "new".
+     *
+     * @param Domain|string $domain
+     * @param float|null $timeout
+     * @return CarbonImmutable|null
+     */
+    public function firstCertificate(Domain|string $domain, ?float $timeout = null): ?CarbonImmutable
+    {
+        $domain = $domain instanceof Domain ? $domain : Domain::parse($domain);
+
+        try {
+            $response = Http::withRetries(Http::for('certificates', $timeout)->accept('application/json'), 'certificates')
+                ->get((string) config('laradomains.certificates.endpoint', 'https://crt.sh/'), [
+                    'identity' => $domain->registrable() ?? $domain->ascii,
+                    'match' => '=',
+                    'deduplicate' => 'Y',
+                    'output' => 'json',
+                ]);
+        } catch (ConnectionException) {
+            return null;
+        }
+
+        $entries = $response->successful() ? $response->json() : null;
+
+        if (! is_array($entries) || $entries === []) {
+            return null;
+        }
+
+        $first = null;
+        foreach ($entries as $entry) {
+            try {
+                $date = is_array($entry) && is_string($entry['not_before'] ?? null) ? CarbonImmutable::parse($entry['not_before'], 'UTC') : null;
+            } catch (Throwable) {
+                $date = null;
+            }
+
+            if ($date !== null && ($first === null || $date->lt($first))) {
+                $first = $date;
+            }
+        }
+
+        return $first;
     }
 
     /**

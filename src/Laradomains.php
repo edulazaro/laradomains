@@ -62,11 +62,12 @@ class Laradomains
      * @param Domain|string $domain
      * @param bool $wayback
      * @param float|null $timeout
+     * @param bool $certificates
      * @return Age|null
      */
-    public function age(Domain|string $domain, bool $wayback = false, ?float $timeout = null): ?Age
+    public function age(Domain|string $domain, bool $wayback = false, ?float $timeout = null, bool $certificates = false): ?Age
     {
-        return $this->age->of($domain, $wayback, $timeout);
+        return $this->age->of($domain, $wayback, $timeout, $certificates);
     }
 
     /**

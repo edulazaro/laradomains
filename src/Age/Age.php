@@ -5,15 +5,17 @@ namespace EduLazaro\Laradomains\Age;
 use Carbon\CarbonImmutable;
 
 /**
- * How old a domain is, and how we know: `rdap` is the registration date from the registry,
- * `wayback` the first capture in the Wayback Machine, a lower bound used where the registry
- * has no RDAP.
+ * How old a domain is, and how we know: `rdap` is the registration date from the registry;
+ * `certificates` the first certificate in the Certificate Transparency logs and `wayback` the
+ * first capture in the Wayback Machine, two lower bounds for registries without RDAP.
  */
 final class Age
 {
     public const RDAP = 'rdap';
 
     public const WAYBACK = 'wayback';
+
+    public const CERTIFICATES = 'certificates';
 
     /**
      * @param CarbonImmutable $since

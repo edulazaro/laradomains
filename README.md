@@ -133,8 +133,9 @@ TLDs missing from the IANA bootstrap are sent to a relay, `rdap.org` by default.
 ## Age
 
 ```php
-$age = Domains::age('example.com');                 // from RDAP
-$age = Domains::age('ejemplo.es', wayback: true);   // first Wayback capture when the registry has no date
+$age = Domains::age('example.com');                      // from RDAP
+$age = Domains::age('ejemplo.es', certificates: true);   // first certificate in the CT logs when the registry has no date
+$age = Domains::age('ejemplo.es', wayback: true);        // first Wayback capture
 
 $age->days();             // 10950
 $age->years();            // 30.0
@@ -142,6 +143,11 @@ $age->since;              // CarbonImmutable
 $age->source;             // "rdap" or "wayback"
 $age->isNewerThan(30);    // registered in the last month?
 ```
+
+Several registries (`.es`, `.de`, `.io`, `.it`) publish no RDAP, so their domains have no registration date. Two lower bounds stand in for it, both opt-in, and with both asked the earliest date wins:
+
+- `certificates: true` asks crt.sh for the first certificate in the Certificate Transparency logs. Every publicly trusted certificate is logged, and a phishing domain usually gets one the day it is registered, so this is what answers "is it new?" for those TLDs. A domain that never used HTTPS has none, and crt.sh is a free service that is not always up: a failure is unknown, never new.
+- `wayback: true` asks for the first Wayback Machine capture, which sees old domains well and new ones hardly at all.
 
 The Wayback fallback is off by default: its CDX server allows about a dozen requests a minute, which suits a queued job and not a request path. A refused request waits `wayback.retry_delay` milliseconds (5000 by default) before each of `wayback.retries` retries. A first capture is a lower bound, not a registration date.
 

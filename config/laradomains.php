@@ -37,6 +37,7 @@ return [
         'dns' => 3,
         'screen' => 2,
         'wayback' => 20,
+        'certificates' => 20,
     ],
 
     // Tries after the first one, and the pause before each (ms). The Wayback CDX server
@@ -46,11 +47,13 @@ return [
         'dns' => 1,
         'screen' => 0,
         'wayback' => 1,
+        'certificates' => 1,
     ],
 
     'retry_delay' => [
         'dns' => 200,
         'wayback' => 5000,
+        'certificates' => 3000,
     ],
 
     'user_agent' => env('LARADOMAINS_USER_AGENT', 'Laradomains (+https://github.com/edulazaro/laradomains)'),
@@ -135,6 +138,22 @@ return [
 
     'wayback' => [
         'endpoint' => 'https://web.archive.org/cdx/search/cdx',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Certificate Transparency
+    |--------------------------------------------------------------------------
+    |
+    | crt.sh's search over the CT logs, for the first certificate of a domain:
+    | the other lower bound of its age, and the one that sees a phishing domain
+    | registered yesterday. Opt-in per call, like Wayback. A free service that
+    | is not always up; a failure is "unknown".
+    |
+    */
+
+    'certificates' => [
+        'endpoint' => 'https://crt.sh/',
     ],
 
     /*
