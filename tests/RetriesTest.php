@@ -36,11 +36,14 @@ class RetriesTest extends TestCase
         Domains::dns()->query('https://cloudflare-dns.com/dns-query', 'example.com', 'A', retries: 0);
         Http::assertSentCount(2);
 
-        Domains::screen('example.com', adult: false, retries: 0);
+        Domains::dns()->acceptsMail('example.com', retries: 0);
         Http::assertSentCount(3);
 
-        Domains::age('ejemplo.es', certificates: true, retries: 0);
+        Domains::screen('example.com', adult: false, retries: 0);
         Http::assertSentCount(4);
+
+        Domains::age('ejemplo.es', certificates: true, retries: 0);
+        Http::assertSentCount(5);
     }
 
     public function test_a_call_can_ask_for_more_retries_than_the_config(): void

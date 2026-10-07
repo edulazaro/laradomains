@@ -15,8 +15,8 @@ use Illuminate\Support\Facades\Http as Client;
  * PHP's dns_get_record() instead.
  *
  * A failed lookup and a name with no records both come back as an empty list: for the
- * questions this answers (does it resolve, does it take mail, what TXT does it publish) the
- * caller acts the same way.
+ * questions these describe (does it resolve, what TXT does it publish) the caller acts the
+ * same way. acceptsMail() and query() keep the two apart: null is "could not tell".
  */
 final class DnsClient
 {
@@ -36,9 +36,23 @@ final class DnsClient
         $host = $domain instanceof Domain ? $domain->ascii : Domain::parse($domain)->ascii;
         $type = strtoupper($type);
 
+        return $this->lookup($host, $type) ?? [];
+    }
+
+    /**
+     * Records of one type with the configured driver, or null when the lookup failed.
+     *
+     * @param string $host
+     * @param string $type
+     * @param float|null $timeout
+     * @param int|null $retries
+     * @return list<string>|null
+     */
+    private function lookup(string $host, string $type, ?float $timeout = null, ?int $retries = null): ?array
+    {
         return config('laradomains.dns.driver') === 'system'
             ? $this->system($host, $type)
-            : $this->doh((string) config('laradomains.dns.doh_endpoint'), $host, $type);
+            : $this->query((string) config('laradomains.dns.doh_endpoint'), $host, $type, 'dns', $timeout, $retries);
     }
 
     /**
@@ -87,23 +101,57 @@ final class DnsClient
      */
     public function mx(Domain|string $domain): array
     {
-        $records = $this->records($domain, 'MX');
+        return $this->exchangers($this->records($domain, 'MX'));
+    }
+
+    /**
+     * @param list<string> $records "priority host" pairs.
+     * @return list<string>
+     */
+    private function exchangers(array $records): array
+    {
         usort($records, fn (string $a, string $b) => (int) $a <=> (int) $b);
 
         return array_values(array_map(fn (string $r) => strtolower(rtrim(preg_replace('/^\d+\s+/', '', $r), '.')), $records));
     }
 
     /**
-     * Whether the domain takes mail. A null MX (RFC 7505, a single "0 .") means it refuses mail.
+     * Whether the domain takes mail, as a mail server would decide it (RFC 5321 §5.1): its MX
+     * hosts, or with no MX at all the domain's own address. A null MX (RFC 7505, a single
+     * "0 .") refuses mail. Null when a lookup failed, so "could not tell" is never "no".
      *
      * @param Domain|string $domain
-     * @return bool
+     * @param float|null $timeout Seconds for each lookup; otherwise `timeouts.dns`.
+     * @param int|null $retries For each lookup; otherwise `retries.dns`.
+     * @return bool|null
      */
-    public function acceptsMail(Domain|string $domain): bool
+    public function acceptsMail(Domain|string $domain, ?float $timeout = null, ?int $retries = null): ?bool
     {
-        $mx = $this->mx($domain);
+        $host = $domain instanceof Domain ? $domain->ascii : Domain::parse($domain)->ascii;
+        $mx = $this->lookup($host, 'MX', $timeout, $retries);
 
-        return $mx !== [] && $mx !== [''];
+        if ($mx === null) {
+            return null;
+        }
+
+        if ($mx !== []) {
+            return array_filter($this->exchangers($mx), fn (string $exchanger) => $exchanger !== '') !== [];
+        }
+
+        // No MX: mail goes to the address of the domain itself (the implicit MX).
+        $a = $this->lookup($host, 'A', $timeout, $retries);
+
+        if ($a !== null && $a !== []) {
+            return true;
+        }
+
+        $aaaa = $this->lookup($host, 'AAAA', $timeout, $retries);
+
+        if ($aaaa !== null && $aaaa !== []) {
+            return true;
+        }
+
+        return $a === null || $aaaa === null ? null : false;
     }
 
     /**
@@ -220,11 +268,14 @@ final class DnsClient
     }
 
     /**
+     * dns_get_record() answers [] both for a name with no records and for one that does not
+     * exist, and false only when the resolver failed (SERVFAIL, TRY_AGAIN): that is null here.
+     *
      * @param string $host
      * @param string $type
-     * @return list<string>
+     * @return list<string>|null
      */
-    private function system(string $host, string $type): array
+    private function system(string $host, string $type): ?array
     {
         $flags = ['A' => DNS_A, 'AAAA' => DNS_AAAA, 'NS' => DNS_NS, 'CNAME' => DNS_CNAME, 'MX' => DNS_MX, 'TXT' => DNS_TXT][$type] ?? null;
 
@@ -232,7 +283,11 @@ final class DnsClient
             return [];
         }
 
-        $records = @dns_get_record($host, $flags) ?: [];
+        $records = @dns_get_record($host, $flags);
+
+        if ($records === false) {
+            return null;
+        }
 
         return array_values(array_filter(array_map(fn (array $r) => match ($type) {
             'A' => $r['ip'] ?? null,
