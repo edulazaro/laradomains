@@ -73,6 +73,7 @@ Domain::parse('аррӏе.ru')->isLookalike();    // false: Cyrillic is the norm
 ```php
 Domain::parse('аррӏе.com')->skeleton();                                    // "apple.com"
 Domain::parse('www.paypa1.com')->imitates(['paypal.com']);                 // "paypal.com"
+Domain::parse('gօօgle.com')->imitates(['google.com']);                     // "google.com" (Armenian օ)
 Domain::parse('paypal.com.secure-login.io')->impersonates(['paypal.com']); // "paypal.com"
 Domain::parse('paypal-secure.com')->impersonates(['paypal.com']);          // "paypal.com"
 Domain::parse('paypalooza.com')->impersonates(['paypal.com']);             // null: a part, not a substring

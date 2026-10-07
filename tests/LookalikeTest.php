@@ -65,4 +65,14 @@ class LookalikeTest extends TestCase
         $this->assertNull(Domain::parse('bbc-news.com')->impersonates($brands));     // under four letters
         $this->assertNull(Domain::parse('x-files.com')->impersonates($brands));
     }
+
+    public function test_imitates_knows_the_scripts_the_table_leaves_out(): void
+    {
+        $brands = ['google.com', 'paypal.com', 'ibm.com'];
+
+        $this->assertSame('google.com', Domain::parse('gօօgle.com')->imitates($brands));   // Armenian օ
+        $this->assertSame('paypal.com', Domain::parse('paypɑl.com')->imitates($brands));   // Latin alpha
+        $this->assertSame('ibm.com', Domain::parse('ıbm.com')->imitates($brands));         // dotless ı
+        $this->assertNull(Domain::parse('яндекс.com')->imitates($brands));
+    }
 }

@@ -199,8 +199,9 @@ final class Domain implements Stringable
 
     /**
      * The brand this name passes for, or null: a different domain whose skeleton matches one of
-     * the given ones, also after swapping 0 for o and 1 for l (`paypa1.com`). `www` is ignored
-     * on both sides.
+     * the given ones, also after swapping 0 for o and 1 for l (`paypa1.com`), or that Unicode's
+     * confusables data says reads the same (`gօօgle.com` with Armenian օ, `paypɑl.com`). `www`
+     * is ignored on both sides.
      *
      * @param iterable<string> $brands Domains such as "paypal.com".
      * @return string|null
@@ -209,6 +210,7 @@ final class Domain implements Stringable
     {
         $self = $this->withoutWww();
         $mine = [$self->skeleton(), strtr($self->skeleton(), ['0' => 'o', '1' => 'l'])];
+        $checker = $self->isIdn() && class_exists(\Spoofchecker::class) ? new \Spoofchecker : null;
 
         foreach ($brands as $brand) {
             $target = self::tryParse($brand)?->withoutWww();
@@ -218,6 +220,12 @@ final class Domain implements Stringable
             }
 
             if (in_array($target->unicode, $mine, true) || in_array(strtr($target->unicode, ['0' => 'o', '1' => 'l']), $mine, true)) {
+                return $target->ascii;
+            }
+
+            // Unicode's full confusables data, for the scripts the table above leaves out:
+            // Armenian (`gօօgle`), dotless ı, Latin alpha (`paypɑl`) and the rest.
+            if ($checker !== null && $checker->areConfusable($self->unicode, $target->unicode)) {
                 return $target->ascii;
             }
         }
